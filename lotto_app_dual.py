@@ -26,7 +26,7 @@ class HighHitRateEngine:
 # Streamlit UI
 # ==========================================
 st.set_page_config(page_title="高命中率選號器 + 歷史比對", layout="centered")
-st.title("🎯 高命中率選號器 + 歷史比對 + 平均中小獎命中率")
+st.title("🎯 高命中率選號器 + 歷史比對（曾中過號碼）")
 
 # 遊戲選擇
 game_type = st.selectbox("選擇遊戲", ["今彩 539", "大樂透"])
@@ -60,22 +60,20 @@ if uploaded_file:
         for _ in range(5):
             combo = HighHitRateEngine.generate_combo(max_num, pick_count, hot_numbers)
             
-            # 計算歷史命中次數
-            match_count = sum(len(set(combo) & set(hist)) for hist in history_rows)
+            # 計算歷史中曾出現過的號碼數
+            # max_hit_numbers = 在歷史上同一期中命中的最大號碼數
+            max_hit_numbers = max(len(set(combo) & set(hist)) for hist in history_rows)
             
-            # 計算平均每期中小獎數
-            avg_hit_per_draw = sum(len(set(combo) & set(hist)) for hist in history_rows) / len(history_rows)
-            
-            top5.append((combo, match_count, avg_hit_per_draw))
+            top5.append((combo, max_hit_numbers))
 
-        st.subheader("🎯 5 組推薦號碼與歷史命中統計")
-        for idx, (combo, match_count, avg_hit) in enumerate(top5, 1):
-            st.markdown(f"**組 {idx}:** {combo}  | 歷史命中次數: {match_count} | 平均每期命中: {avg_hit:.2f}")
+        st.subheader("🎯 5 組推薦號碼與歷史曾中號碼數")
+        for idx, (combo, max_hit) in enumerate(top5, 1):
+            st.markdown(f"**組 {idx}:** {combo}  | 歷史曾中過號碼數: {max_hit}")
 
         # 匯出報告
         report_lines = [f"高命中率報告 + 歷史比對 - {datetime.now()}", f"遊戲: {game_type}", ""]
-        for idx, (combo, match_count, avg_hit) in enumerate(top5, 1):
-            report_lines.append(f"組 {idx}: {combo}  歷史命中次數: {match_count} | 平均每期命中: {avg_hit:.2f}")
+        for idx, (combo, max_hit) in enumerate(top5, 1):
+            report_lines.append(f"組 {idx}: {combo}  | 歷史曾中過號碼數: {max_hit}")
         report_text = "\n".join(report_lines)
 
         st.download_button("📥 下載報告",
