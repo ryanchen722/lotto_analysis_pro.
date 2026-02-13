@@ -3,55 +3,33 @@ import streamlit as st
 from datetime import datetime
 
 # ==========================================
-# 風險控制引擎
+# 高命中率號碼生成引擎
 # ==========================================
-class CrowdAvoidanceEngine:
+class HighHitRateEngine:
 
     @staticmethod
-    def number_risk(n, max_num):
-        """單個數字風險評分"""
-        risk = 0
-        # 生日區風險
-        if n <= 31:
-            risk += 2
-        # 熱門數字
-        if n in [6, 8, 9, 18, 28]:
-            risk += 2
-        # 對稱數
-        if n in [11, 22, 33]:
-            risk += 1.5
-        # 十位數整齊懲罰
-        if n % 10 == 0:
-            risk += 1
-        # 高號區加分（低撞號）
-        if n > max_num * 0.7:
-            risk -= 1
-        return risk
+    def generate_combo(max_num, pick_count, hot_numbers, hot_ratio=0.6):
+        """
+        生成一組高命中率號碼
+        hot_numbers: 熱門號列表
+        hot_ratio: 組合中熱門號比例
+        """
+        num_hot = max(1, int(pick_count * hot_ratio))  # 至少一個熱門號
+        num_other = pick_count - num_hot
 
-    @staticmethod
-    def combo_risk(combo, max_num):
-        """整組號碼風險評分"""
-        risk = sum(CrowdAvoidanceEngine.number_risk(n, max_num)
-                   for n in combo)
+        hot_pool = hot_numbers.copy()
+        other_pool = [n for n in range(1, max_num + 1) if n not in hot_pool]
 
-        # 連號懲罰
-        combo_sorted = sorted(combo)
-        for i in range(len(combo_sorted) - 1):
-            if combo_sorted[i] + 1 == combo_sorted[i + 1]:
-                risk += 2
-
-        # 全奇或全偶懲罰
-        evens = sum(n % 2 == 0 for n in combo)
-        if evens == 0 or evens == len(combo):
-            risk += 2
-
-        return risk
+        combo = random.sample(hot_pool, min(num_hot, len(hot_pool)))
+        combo += random.sample(other_pool, num_other)
+        random.shuffle(combo)
+        return sorted(combo)
 
 # ==========================================
 # Streamlit UI
 # ==========================================
-st.set_page_config(page_title="低撞號優化選號器", layout="centered")
-st.title("💎 真優化選號器 — 低撞號風險模型 (5 組候選)")
+st.set_page_config(page_title="高命中率選號器", layout="centered")
+st.title("🎯 高命中率選號器 — 天天中小獎版")
 
 # 遊戲類型選擇
 game_type = st.selectbox("選擇遊戲", ["今彩 539", "大樂透"])
@@ -59,37 +37,32 @@ game_type = st.selectbox("選擇遊戲", ["今彩 539", "大樂透"])
 if game_type == "今彩 539":
     max_num = 39
     pick_count = 5
+    # 539 常見熱門號
+    hot_numbers = [1,3,5,7,9,11,13,15,17,18,21,23,25,28,31]
 else:
     max_num = 49
     pick_count = 6
+    # 大樂透熱門號
+    hot_numbers = [1,3,7,8,11,13,17,18,21,23,28,31,33,35,37,40,42,45,48]
 
-# 模擬生成號碼
-if st.button("🚀 產生 5 組最低撞號風險組合"):
-    candidates = []
-
-    with st.spinner("計算中..."):
-        # 生成 50000 組候選
-        for _ in range(50000):
-            nums_pool = list(range(1, max_num + 1))
-            random.shuffle(nums_pool)
-            combo = sorted(random.sample(nums_pool, pick_count))
-            risk = CrowdAvoidanceEngine.combo_risk(combo, max_num)
-            candidates.append((combo, risk))
-
-        # 按風險排序，取前 5 組
-        top5 = sorted(candidates, key=lambda x: x[1])[:5]
+# 生成號碼
+if st.button("🚀 產生 5 組高命中率號碼"):
+    top5 = []
+    for _ in range(5):
+        combo = HighHitRateEngine.generate_combo(max_num, pick_count, hot_numbers)
+        top5.append(combo)
 
     st.success("完成！")
     st.subheader("🎯 5 組推薦號碼")
-    for idx, (combo, risk) in enumerate(top5, 1):
-        st.markdown(f"**組 {idx}:** {combo}  | 風險分數: {risk:.2f}")
+    for idx, combo in enumerate(top5, 1):
+        st.markdown(f"**組 {idx}:** {combo}")
 
     # 匯出報告
-    report_lines = [f"真優化報告 - {datetime.now()}", f"遊戲: {game_type}", ""]
-    for idx, (combo, risk) in enumerate(top5, 1):
-        report_lines.append(f"組 {idx}: {combo} 風險分數: {risk:.2f}")
+    report_lines = [f"高命中率報告 - {datetime.now()}", f"遊戲: {game_type}", ""]
+    for idx, combo in enumerate(top5, 1):
+        report_lines.append(f"組 {idx}: {combo}")
     report_text = "\n".join(report_lines)
 
     st.download_button("📥 下載報告",
                        report_text,
-                       file_name=f"{game_type}_low_collision_top5.txt")
+                       file_name=f"{game_type}_high_hit_top5.txt")
