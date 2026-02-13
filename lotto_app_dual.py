@@ -1,129 +1,162 @@
 import pandas as pd
-import numpy as np
 from collections import Counter
 import random
 import streamlit as st
 from datetime import datetime
 
-# ==========================================
-# 核心數學模組 - 高斯思維
-# ==========================================
-class GaussEngine:
-    @staticmethod
-    def calculate_ac_value(nums):
-        """計算 AC 值 (算術複雜度)"""
-        differences = set()
-        for i in range(len(nums)):
-            for j in range(i + 1, len(nums)):
-                differences.add(abs(nums[i] - nums[j]))
-        return len(differences) - (len(nums) - 1)
+# 設定網頁標題與風格
+st.set_page_config(page_title="威力彩大數據大師", layout="centered")
 
-    @staticmethod
-    def get_stats(history_rows):
-        """計算歷史均值與標準差"""
-        sums = [sum(row) for row in history_rows]
-        return np.mean(sums), np.std(sums)
+def calculate_ac_value(nums):
+    """計算 AC 值 (算術複雜度)"""
+    differences = set()
+    for i in range(len(nums)):
+        for j in range(i + 1, len(nums)):
+            differences.add(abs(nums[i] - nums[j]))
+    return len(differences) - (len(nums) - 1)
 
-    @staticmethod
-    def is_mod_balanced(nums, mod=3):
-        """數論過濾：檢查餘數分佈是否均衡"""
-        dist = Counter([n % mod for n in nums])
-        # 對於 5-6 碼，單一餘數不應超過 4 個
-        return all(v <= 4 for v in dist.values())
+def count_consecutive_groups(nums):
+    """計算連號組數"""
+    groups = 0
+    i = 0
+    while i < len(nums) - 1:
+        if nums[i] + 1 == nums[i+1]:
+            groups += 1
+            while i < len(nums) - 1 and nums[i] + 1 == nums[i+1]:
+                i += 1
+        else:
+            i += 1
+    return groups
 
-# ==========================================
-# Streamlit UI 設定
-# ==========================================
-st.set_page_config(page_title="大樂透分析師 - Pro", page_icon="📐", layout="centered")
-
-st.title("📐 大樂透分析師 (Gauss Pro)")
+st.title("🎲 威力彩精準分析 App")
 st.markdown("---")
 
-# 選擇模式
-mode = st.radio("選擇分析模式", ["大樂透 (6/49)", "今彩 539 (5/39)"], horizontal=True)
-ball_count = 6 if "大樂透" in mode else 5
-ac_threshold = 7 if ball_count == 6 else 5
-
-uploaded_file = st.file_uploader(f"📂 上傳 {mode} 歷史數據 (.xlsx)", type=["xlsx"])
+# 1. 檔案上傳區
+uploaded_file = st.file_uploader("📂 請上傳威力彩歷史數據 (lotto_data.xlsx)", type=["xlsx"])
 
 if uploaded_file:
     try:
-        df = pd.read_excel(uploaded_file, header=None, engine='openpyxl')
-        history_rows = []
-        all_nums = []
+        df = pd.read_excel(uploaded_file, header=None)
+        first_zone_rows = []
+        all_first = []
+        history_ac_values = []
         
         for val in df.iloc[:, 1].dropna().astype(str):
-            clean = val.replace(' ', ',').replace('，', ',')
+            clean = val.replace('?', '').replace(' ', ',').replace('，', ',')
             nums = sorted([int(n) for n in clean.split(',') if n.strip().isdigit()])
-            if len(nums) == ball_count:
-                history_rows.append(nums)
-                all_nums.extend(nums)
+            if len(nums) == 6:
+                first_zone_rows.append(nums)
+                all_first.extend(nums)
+                # 計算每一期的歷史 AC 值
+                history_ac_values.append(calculate_ac_value(nums))
         
-        if not history_rows:
-            st.error("檔案格式不符，請確認第二欄包含正確的號碼。")
-            st.stop()
+        second_zone = []
+        for n in df.iloc[:, 2].dropna():
+            clean_s = str(n).replace('?', '').strip()
+            if clean_s.isdigit(): second_zone.append(int(clean_s))
 
-        # 高斯分析展示
-        mean_v, std_v = GaussEngine.get_stats(history_rows)
+        # --- 側邊欄：手動樣本輸入 ---
+        st.sidebar.header("📝 現場樣本參考")
+        st.sidebar.info("若在投注站看到電腦選號，請輸入其總和以校正算法。")
+        sample_sum = st.sidebar.number_input("輸入樣本總和 (若無則維持 0)", min_value=0, value=0)
+
+        # --- 歷史規律與 AC 值展示 ---
+        st.subheader("🕵️ 歷史規律掃描 (最近 30 期)")
         
-        st.subheader("📊 統計趨勢 (Gaussian Distribution)")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("均值 μ", f"{mean_v:.1f}")
-        c2.metric("標準差 σ", f"{std_v:.1f}")
-        c3.metric("建議區間", f"{int(mean_v-std_v)}-{int(mean_v+std_v)}")
+        # 1. 顯示最近 5 期的卡片 (重點顯示)
+        st.markdown("##### 最近 5 期摘要")
+        cols = st.columns(5)
+        for i in range(min(5, len(first_zone_rows))):
+            current_ac = history_ac_values[i]
+            cols[i].metric(
+                f"前 {i+1} 期", 
+                f"AC: {current_ac}", 
+                f"Sum: {sum(first_zone_rows[i])}"
+            )
+            cols[i].caption(f"{first_zone_rows[i]}")
 
-        # 側邊欄設定
-        st.sidebar.header("📝 參數校正")
-        sample_sum = st.sidebar.number_input("現場電腦選號總和", min_value=0, value=0)
-        conf_level = st.sidebar.slider("信心區間倍數", 0.5, 2.0, 1.0)
+        # 2. 展開顯示其餘期數 (至第 30 期)
+        with st.expander("查看更多歷史數據 (前 6-30 期)"):
+            history_data = []
+            max_hist = min(30, len(first_zone_rows))
+            for i in range(max_hist):
+                history_data.append({
+                    "期數": f"前 {i+1} 期",
+                    "號碼": str(first_zone_rows[i]),
+                    "總和": sum(first_zone_rows[i]),
+                    "AC值": history_ac_values[i],
+                    "連號": f"{count_consecutive_groups(first_zone_rows[i])} 組"
+                })
+            st.table(pd.DataFrame(history_data))
 
-        if st.button(f"🚀 啟動 8000 次高斯模擬", use_container_width=True):
-            f_counts = Counter(all_nums)
+        # 顯示 AC 統計摘要
+        if history_ac_values:
+            # 計算前 30 期的統計數據
+            recent_30_ac = history_ac_values[:30]
+            avg_ac = sum(recent_30_ac) / len(recent_30_ac)
+            most_common_ac = Counter(recent_30_ac).most_common(1)[0][0]
+            
+            st.info(f"""
+            **📈 最近 30 期 AC 數據分析：**
+            * 歷史平均 AC 值：`{avg_ac:.2f}`
+            * 出現頻率最高 AC 值：`{most_common_ac}` (建議區間：7-10)
+            """)
+
+        # --- 核心分析按鈕 ---
+        if st.button("🚀 開始精準模擬分析", use_container_width=True):
+            f_counts = Counter(all_first)
             weighted_pool = []
             for n, count in f_counts.items():
                 weighted_pool.extend([n] * count)
             
-            # 區間決策
-            t_min, t_max = (sample_sum - 15, sample_sum + 15) if sample_sum > 0 else (mean_v - std_v * conf_level, mean_v + std_v * conf_level)
+            if sample_sum > 0:
+                target_min, target_max = sample_sum - 20, sample_sum + 20
+            else:
+                target_min, target_max = 95, 155
 
+            last_draw = set(first_zone_rows[0]) if first_zone_rows else set()
             candidates = []
-            last_draw = set(history_rows[0])
-
-            with st.spinner('進行蒙地卡羅運算中...'):
-                for _ in range(8000):
-                    res = sorted(random.sample(weighted_pool, ball_count) if len(set(weighted_pool)) >= ball_count else random.sample(range(1, 50), ball_count))
-                    f_sum = sum(res)
-                    ac_val = GaussEngine.calculate_ac_value(res)
+            with st.spinner('正在進行 5000 次蒙地卡羅模擬...'):
+                for _ in range(5000):
+                    res_set = set()
+                    while len(res_set) < 6:
+                        res_set.add(random.choice(weighted_pool))
                     
-                    if (t_min <= f_sum <= t_max and 
-                        ac_val >= ac_threshold and 
-                        len(set(res).intersection(last_draw)) <= 2 and
-                        GaussEngine.is_mod_balanced(res)):
-                        candidates.append((res, f_sum, ac_val))
+                    res_list = sorted(list(res_set))
+                    f_sum = sum(res_list)
+                    ac_val = calculate_ac_value(res_list)
+                    overlap = len(set(res_list).intersection(last_draw))
+                    has_triple = any(res_list[j]+2 == res_list[j+1]+1 == res_list[j+2] for j in range(4))
+
+                    if (target_min <= f_sum <= target_max and 
+                        ac_val >= 7 and overlap <= 2 and not has_triple):
+                        candidates.append((res_list, f_sum, ac_val))
                         if len(candidates) >= 10: break
 
             if candidates:
-                final_res, final_sum, final_ac = random.choice(candidates)
-                st.success(f"### 推薦號碼：{final_res}")
+                rec_f, f_sum, ac_val = random.choice(candidates)
+                s_counts = Counter(second_zone)
+                hot_s = [n for n, c in s_counts.most_common(3)]
+                rec_s = random.choice(hot_s) if random.random() > 0.5 else random.randint(1, 8)
+
+                st.success("✨ 分析完成！推薦組合如下：")
+                res_col1, res_col2 = st.columns(2)
+                with res_col1:
+                    st.markdown(f"### 第一區：\n`{rec_f}`")
+                with res_col2:
+                    st.markdown(f"### 第二區：\n`[{rec_s:02d}]`")
+
+                st.info(f"📊 分析數據：總和 {f_sum} | AC 複雜度 {ac_val} | 連號 {count_consecutive_groups(rec_f)} 組")
                 
-                # 回測
-                target_set = set(final_res)
-                hits = {i: 0 for i in range(2, ball_count + 1)}
-                for h in history_rows:
-                    m = len(target_set.intersection(set(h)))
-                    if m in hits: hits[m] += 1
-                
-                st.markdown("### 📜 歷史回測碰撞")
-                cols = st.columns(len(hits))
-                for i, (k, v) in enumerate(reversed(list(hits.items()))):
-                    cols[i].metric(f"中 {k} 碼", f"{v} 次")
+                result_text = f"分析時間: {datetime.now()}\n第一區: {rec_f}\n第二區: {rec_s}\n總和: {f_sum}\nAC值: {ac_val}"
+                st.download_button("📥 下載分析結果", result_text, file_name="lotto_result.txt")
             else:
-                st.error("找不到符合高斯規律的解，請調整參數。")
+                st.error("❌ 無法找到符合嚴格過濾條件的組合，請重試或放寬樣本限制。")
 
     except Exception as e:
-        st.error(f"分析錯誤: {e}")
+        st.error(f"讀取檔案失敗: {e}")
 else:
-    st.info("💡 請上傳歷史數據以啟動數學分析模型。")
+    st.info("💡 請上傳您的 Excel 資料表開始分析。")
 
 st.markdown("---")
-st.caption("Gauss Analysis Tool v1.0 | 數據科學與機率研究")
+st.caption("本工具僅供統計分析參考，請理性投注。")
