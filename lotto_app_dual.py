@@ -6,7 +6,7 @@ import streamlit as st
 from datetime import datetime
 
 # ==========================================
-# Gauss Research Engine V6.6
+# Gauss Research Engine V6.7
 # ==========================================
 class GaussResearchEngine:
 
@@ -51,9 +51,9 @@ class GaussResearchEngine:
 # ==========================================
 # UI Configuration
 # ==========================================
-st.set_page_config(page_title="Gauss Master Pro V6.6", layout="wide", page_icon="💎")
-st.title("💎 Gauss Master Pro V6.6 - 終極精選矩陣")
-st.markdown("本版本優化了排序權重邏輯，並過濾了低價值統計數據 (中 0, 1 碼)。")
+st.set_page_config(page_title="Gauss Master Pro V6.7", layout="wide", page_icon="💎")
+st.title("💎 Gauss Master Pro V6.7 - 專家級 AC 調控版")
+st.markdown("本版本新增「AC 值門檻自定義滑桿」，讓研究者能精確控制組合複雜度。")
 st.markdown("---")
 
 # 側邊欄設定
@@ -61,9 +61,22 @@ st.sidebar.header("⚙️ 核心研究參數")
 game_type = st.sidebar.selectbox("遊戲模式", ["今彩 539", "大樂透"])
 
 if game_type == "今彩 539":
-    max_num, pick_count, ac_threshold = 39, 5, 6
+    max_num, pick_count = 39, 5
+    default_ac = 6
+    max_ac_val = 10
 else:
-    max_num, pick_count, ac_threshold = 49, 6, 8
+    max_num, pick_count = 49, 6
+    default_ac = 8
+    max_ac_val = 15
+
+# 🔥 新增：AC 值調整滑桿
+ac_threshold = st.sidebar.slider(
+    "AC 值最小門檻 (複雜度)", 
+    min_value=1, 
+    max_value=max_ac_val, 
+    value=default_ac,
+    help="AC 值越高，號碼分佈越隨機。通常 539 建議 6 以上，大樂透建議 8 以上。"
+)
 
 hot_mode = st.sidebar.select_slider("數字權重偏好", options=["極冷", "偏冷", "平衡", "偏熱", "極熱"], value="平衡")
 max_collision_limit = st.sidebar.slider("禁止出現過大獎的組合 (排除歷史命中 > X)", 1, pick_count, pick_count-1)
@@ -121,8 +134,9 @@ if uploaded_file:
 
         if st.button("🚀 啟動二次加權精選模擬"):
             candidate_pool = []
-            with st.spinner("AI 正在執行多因子排序評分 (AC + 回歸 + 活性)..."):
-                for _ in range(25000):
+            with st.spinner(f"AI 正在過濾 AC < {ac_threshold} 的組合並執行評分..."):
+                # 增加嘗試次數以應對高 AC 門檻
+                for _ in range(30000):
                     res = sorted(random.choices(num_range, weights=weights, k=pick_count))
                     if len(set(res)) != pick_count: continue
 
@@ -130,10 +144,11 @@ if uploaded_file:
                     ac = GaussResearchEngine.calculate_ac_value(res)
                     consec = GaussResearchEngine.count_consecutive_groups(res)
 
+                    # 應用使用者定義的 AC 門檻
                     if abs(s - avg_sum) < 30 and ac >= ac_threshold and consec <= 1:
                         stats, max_hit = GaussResearchEngine.get_detailed_comparison(res, history)
                         if max_hit <= max_collision_limit:
-                            # 核心排序依據：AC值(40%) + 總和接近度(30%) + 歷史中2碼活性(30%)
+                            # 綜合評分依據：AC值加權 + 總和接近度 + 歷史2碼活性
                             score = (ac * 12) - (abs(s - avg_sum) * 0.4) + (stats[2] * 2.5)
                             candidate_pool.append({
                                 "combo": res, "sum": s, "ac": ac, "consec": consec,
@@ -142,7 +157,7 @@ if uploaded_file:
                             if len(candidate_pool) >= 30: break
 
             if not candidate_pool:
-                st.warning("目前設定下無法產生有效組合，請放寬限制。")
+                st.warning(f"目前設定下 (AC >= {ac_threshold}) 無法產生有效組合。請嘗試調低 AC 滑桿或放寬碰撞限制。")
             else:
                 candidate_pool.sort(key=lambda x: x['score'], reverse=True)
                 top_10 = candidate_pool[:10]
@@ -150,7 +165,7 @@ if uploaded_file:
 
                 # --- AI 第一精選展示 ---
                 st.markdown("### 🌟 AI 最終黃金精選")
-                st.info("排序依據：系統優先挑選『AC值高(結構隨機)』、『總和最接近平均值』且『歷史2碼命中率最穩定』的組合。")
+                st.info(f"當前 AC 過濾門檻設定為: {ac_threshold}")
                 c1, c2, c3 = st.columns([1.5, 1, 1])
                 with c1:
                     st.success(f"## ⭐ `{best_one['combo']}`")
@@ -161,9 +176,9 @@ if uploaded_file:
                     st.write(f"🏆 歷史最高：**{best_one['max_hit']} 碼**")
                     st.write(f"🧬 綜合評分：**{best_one['score']:.1f}**")
 
-                # --- Top 10 命中矩陣 (隱藏 0, 1 碼) ---
+                # --- Top 10 命中矩陣 ---
                 st.markdown("---")
-                st.subheader("📊 Top 1-10 候選組合核心命中統計")
+                st.subheader("📊 Top 1-10 候選組合核心命中統計 (中 2 碼以上)")
                 
                 matrix_data = []
                 for idx, item in enumerate(top_10, 1):
@@ -181,20 +196,21 @@ if uploaded_file:
                 st.table(pd.DataFrame(matrix_data))
 
                 # 報告下載
-                report_txt = f"Gauss Master Pro V6.6 精選報告\n"
+                report_txt = f"Gauss Master Pro V6.7 精選報告\n"
                 report_txt += f"生成日期: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                report_txt += f"AC 過濾門檻: {ac_threshold}\n"
                 report_txt += "="*60 + "\n"
                 report_txt += f"【第一推薦】: {best_one['combo']}\n"
                 report_txt += f"歷史戰績: 中2碼({best_one['stats'][2]}次), 中3({best_one['stats'][3]}次), 中4({best_one['stats'][4]}次)\n"
                 report_txt += "="*60 + "\n\n"
                 for idx, item in enumerate(top_10, 1):
                     s = item['stats']
-                    report_txt += f"Top {idx}: {item['combo']} | 評分: {item['score']:.1f} | 2/3/4碼命中: ({s[2]}, {s[3]}, {s[4]})\n"
+                    report_txt += f"Top {idx}: {item['combo']} | AC: {item['ac']} | 2/3/4碼命中: ({s[2]}, {s[3]}, {s[4]})\n"
 
                 st.download_button(
-                    label="📥 下載完整 V6.6 精選報告",
+                    label="📥 下載完整 V6.7 研究報告",
                     data=report_txt,
-                    file_name=f"Gauss_V6_6_Choice.txt",
+                    file_name=f"Gauss_V6_7_Report.txt",
                     mime="text/plain",
                     use_container_width=True
                 )
@@ -202,8 +218,8 @@ if uploaded_file:
     except Exception as e:
         st.error(f"分析失敗: {e}")
 else:
-    st.info("👋 請上傳歷史 Excel 資料以啟動分析。")
+    st.info("👋 請上傳歷史 Excel 資料並於側邊欄設定 AC 門檻。")
 
 st.markdown("---")
-st.caption("Gauss Master Pro V6.6 | 二次加權精選 | 核心命中分析 | 排除歷史大獎組合")
+st.caption("Gauss Master Pro V6.7 | 自定義 AC 門檻 | 命中矩陣分析 | 歷史回歸模型")
 
