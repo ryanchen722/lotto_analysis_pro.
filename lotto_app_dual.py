@@ -3,22 +3,56 @@ import streamlit as st
 from datetime import datetime
 
 # ==========================================
-# 純隨機獨立事件選號器
+# 反人性隨機選號器
 # ==========================================
 
-def generate_random_combo(max_num, pick_count):
-    """產生一組完全隨機、不重複號碼"""
-    return sorted(random.sample(range(1, max_num + 1), pick_count))
+def calculate_ac(nums):
+    diffs = set()
+    for i in range(len(nums)):
+        for j in range(i+1, len(nums)):
+            diffs.add(abs(nums[i] - nums[j]))
+    return len(diffs) - (len(nums) - 1)
+
+def has_long_consecutive(nums):
+    nums = sorted(nums)
+    count = 1
+    for i in range(1, len(nums)):
+        if nums[i] == nums[i-1] + 1:
+            count += 1
+            if count >= 3:
+                return True
+        else:
+            count = 1
+    return False
+
+def generate_smart_random(max_num, pick_count):
+
+    while True:
+        combo = sorted(random.sample(range(1, max_num+1), pick_count))
+
+        # 1️⃣ 至少一個 >31
+        if max_num >= 39:
+            if not any(n > 31 for n in combo):
+                continue
+
+        # 2️⃣ 避免3連號
+        if has_long_consecutive(combo):
+            continue
+
+        # 3️⃣ AC值不要太低
+        if calculate_ac(combo) < 2:
+            continue
+
+        return combo
 
 # ==========================================
-# Streamlit UI
+# UI
 # ==========================================
 
-st.set_page_config(page_title="獨立事件隨機選號器", page_icon="🎲", layout="centered")
-st.title("🎲 樂透純隨機選號器（獨立事件版）")
-st.markdown("每一組號碼機率完全相同，無任何歷史推測。")
+st.set_page_config(page_title="反人性隨機選號器", page_icon="🎲", layout="centered")
+st.title("🎲 反人性隨機選號器")
+st.markdown("不提高中獎機率，但降低分獎風險。")
 
-# 遊戲選擇
 game_type = st.selectbox("選擇遊戲", ["今彩 539", "大樂透"])
 
 if game_type == "今彩 539":
@@ -30,29 +64,27 @@ else:
 
 num_sets = st.slider("產生幾組號碼", 1, 10, 5)
 
-if st.button("🎯 產生隨機號碼"):
-
-    st.subheader("隨機產生結果")
+if st.button("🎯 產生反人性號碼"):
 
     results = []
+
     for i in range(num_sets):
-        combo = generate_random_combo(max_num, pick_count)
+        combo = generate_smart_random(max_num, pick_count)
         results.append(combo)
         st.write(f"組 {i+1}: {combo}")
 
-    # 生成下載報告
-    report = f"{game_type} 純隨機選號報告\n"
+    report = f"{game_type} 反人性選號報告\n"
     report += f"生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
     for i, combo in enumerate(results, 1):
         report += f"組 {i}: {combo}\n"
 
     st.download_button(
-        label="📥 下載結果",
-        data=report,
-        file_name=f"{game_type}_Random_{datetime.now().strftime('%Y%m%d')}.txt",
+        "📥 下載結果",
+        report,
+        file_name=f"{game_type}_AntiPopular_{datetime.now().strftime('%Y%m%d')}.txt",
         mime="text/plain"
     )
 
 st.markdown("---")
-st.caption("Independent Random Generator | 每組機率完全相同")
+st.caption("Anti-Popular Strategy | 機率不變 | 降低分獎風險")
