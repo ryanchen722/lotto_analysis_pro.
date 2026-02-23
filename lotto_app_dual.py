@@ -1,5 +1,6 @@
 import random
 import streamlit as st
+import pandas as pd
 from datetime import datetime
 from collections import Counter
 
@@ -9,6 +10,7 @@ from collections import Counter
 
 def calculate_ac(nums):
     """計算算術複雜度 (AC值)"""
+    if not nums: return 0
     diffs = set()
     for i in range(len(nums)):
         for j in range(i+1, len(nums)):
@@ -37,8 +39,12 @@ def has_bad_patterns(nums):
     # 3. 偵測等差數列 (例如 05, 10, 15...)
     if len(nums) >= 5:
         d = nums[1] - nums[0]
-        if all(nums[i] - nums[i-1] == d for i in range(1, len(nums))):
-            return True
+        is_arithmetic = True
+        for i in range(1, len(nums)):
+            if nums[i] - nums[i-1] != d:
+                is_arithmetic = False
+                break
+        if is_arithmetic: return True
             
     return False
 
@@ -61,11 +67,6 @@ def generate_anti_human_combo(max_num, pick_count, ac_min):
         if calculate_ac(combo) < ac_min:
             continue
             
-        # 條件 D: 奇偶分佈 (反人性偶爾需要極端)
-        odds = len([n for n in combo if n % 2 != 0])
-        # 避開最平衡的 3:2 或 2:3，偶爾選擇 4:1 或 5:0 (這才是反人性)
-        # 但為了保證基本機率，我們只要求不要太單一，除非使用者勾選極端模式
-        
         return combo, calculate_ac(combo)
     return None, 0
 
@@ -73,14 +74,13 @@ def generate_anti_human_combo(max_num, pick_count, ac_min):
 # UI 介面設定
 # ==========================================
 
-st.set_page_config(page_title="Gauss Master V6.9 反人性版", page_icon="👺", layout="wide")
+st.set_page_config(page_title="Gauss Master V6.9.1 反人性版", page_icon="👺", layout="wide")
 
-st.title("👺 Gauss Master V6.9 - 絕對反人性選號器")
+st.title("👺 Gauss Master V6.9.1 - 反人性戰略選號器")
 st.markdown("""
-### 為什麼要「反人性」？
-根據統計，大多數人選號會避開 **大號碼 (>31)**、**冷門數字** 或 **不規則分佈**。
-如果您選的號碼跟別人一樣，萬一中獎，您得跟幾百個人分頭獎。
-**本工具機率不變，但確保您中獎時「拿得更多」。**
+### 核心戰略：期望值極大化
+這個工具**不會**提高中獎機率，但會確保您**避開大眾喜好的號碼**。
+當您中獎時，能有效減少與他人平分獎金的機率，從而獲得更高的獎金。
 """)
 
 with st.sidebar:
@@ -92,54 +92,61 @@ with st.sidebar:
     else:
         max_num, pick_count, def_ac = 49, 6, 8
         
-    ac_min = st.slider("強制 AC 複雜度 (越高越亂)", 1, 10, def_ac)
+    ac_min = st.slider("最低 AC 複雜度 (越亂越好)", 1, 10, def_ac)
     num_sets = st.number_input("產生組數", 1, 50, 5)
     
-    st.info("💡 提示：AC 值越高，號碼看起來越『醜』，但也越不容易與人重複。")
+    st.info("💡 AC 值（算術複雜度）越高，代表號碼間的距離越隨機，越難被一般人選中。")
 
-if st.button("🔥 執行反人性掃描生成"):
+if st.button("🔥 啟動反人性掃描生成"):
     results = []
     
-    col1, col2 = st.columns([2, 1])
+    for i in range(int(num_sets)):
+        combo, ac_val = generate_anti_human_combo(max_num, pick_count, ac_min)
+        if combo:
+            results.append({
+                "排行": f"組別 {i+1}", 
+                "號碼組合": ", ".join(map(str, combo)), 
+                "AC值": ac_val, 
+                "總和": sum(combo)
+            })
     
-    with col1:
-        st.subheader("📋 生成結果")
-        for i in range(num_sets):
-            combo, ac_val = generate_anti_human_combo(max_num, pick_count, ac_min)
-            if combo:
-                results.append({"組別": f"第 {i+1} 組", "號碼": combo, "AC值": ac_val, "總和": sum(combo)})
+    if results:
+        col1, col2 = st.columns([2, 1])
         
-        df = pd.DataFrame(results)
-        st.table(df)
+        with col1:
+            st.subheader("📋 反人性精選清單")
+            # 修正處：確保已導入 pandas 並正確轉換
+            df_display = pd.DataFrame(results)
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
 
-    with col2:
-        st.subheader("🧠 戰略分析")
-        if results:
+        with col2:
+            st.subheader("🧠 戰略分析報告")
             avg_sum = sum([x['總和'] for x in results]) / len(results)
             st.metric("平均總和", f"{avg_sum:.1f}")
-            st.write("✅ 已避開 1-31 日期陷阱")
-            st.write("✅ 已過濾 3 連號規律")
-            st.write("✅ 已強制高複雜度分佈")
-            st.warning("請記住：中獎是運氣，分錢是技術。")
+            st.success("✅ 排除 1-31 生日選號群")
+            st.success("✅ 排除 3 連號以上規律")
+            st.success(f"✅ 強制 AC 複雜度 >= {ac_min}")
+            st.warning("記住：彩票是博弈，反人性是技術。")
 
-    # 下載報告
-    report = f"Gauss Master V6.9 反人性選號報告\n"
-    report += f"執行時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-    report += f"遊戲類型: {game_type} | AC 門檻: {ac_min}\n"
-    report += "-"*50 + "\n"
-    for r in results:
-        report += f"{r['組別']}: {r['號碼']} (AC:{r['AC值']}, 總和:{r['總和']})\n"
-    report += "-"*50 + "\n"
-    report += "戰略核心：降低號碼重疊率，最大化單注獎金回報。"
+        # 生成下載報告
+        report_txt = f"Gauss Master V6.9.1 反人性選號報告\n"
+        report_txt += f"分析時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        report_txt += "="*50 + "\n"
+        for r in results:
+            report_txt += f"{r['排行']}: [{r['號碼組合']}] | AC:{r['AC值']} | 總和:{r['總和']}\n"
+        report_txt += "="*50 + "\n"
+        report_txt += "策略關鍵：提高中獎時的獨佔機率。"
 
-    st.download_button(
-        label="📥 下載反人性選號報告",
-        data=report,
-        file_name=f"AntiHuman_{datetime.now().strftime('%Y%m%d')}.txt",
-        mime="text/plain",
-        use_container_width=True
-    )
+        st.download_button(
+            label="📥 下載完整選號報告",
+            data=report_txt,
+            file_name=f"AntiHuman_Report_{datetime.now().strftime('%Y%m%d')}.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+    else:
+        st.error("目前的 AC 門檻過高，無法產生組合。請嘗試調低側邊欄的 AC 門檻。")
 
 st.markdown("---")
-st.caption("Gauss Strategic Analytics | 理性博弈 | 拒絕跟風")
+st.caption("Gauss Master Professional | 反大眾行為分析系統 | 數據科學實驗室")
 
