@@ -1,145 +1,215 @@
+import pandas as pd
+import numpy as np
+from collections import Counter
 import random
 import streamlit as st
-import pandas as pd  # 確保導入 pandas
 from datetime import datetime
-from collections import Counter
 
 # ==========================================
-# 核心演算法：反人性選號邏輯
+# Gauss Research Engine V6.8
 # ==========================================
+class GaussResearchEngine:
 
-def calculate_ac(nums):
-    """計算算術複雜度 (AC值)"""
-    if not nums or len(nums) < 2:
-        return 0
-    diffs = set()
-    for i in range(len(nums)):
-        for j in range(i+1, len(nums)):
-            diffs.add(abs(nums[i] - nums[j]))
-    return len(diffs) - (len(nums) - 1)
+    @staticmethod
+    def calculate_ac_value(nums):
+        """計算 AC 值：衡量號碼組合的複雜度"""
+        diffs = set()
+        for i in range(len(nums)):
+            for j in range(i + 1, len(nums)):
+                diffs.add(abs(nums[i] - nums[j]))
+        return len(diffs) - (len(nums) - 1)
 
-def has_bad_patterns(nums):
-    """偵測並排除容易與大眾重複的號碼模式"""
-    nums = sorted(nums)
-    
-    # 1. 排除三連號 (人性喜歡連號)
-    count = 1
-    for i in range(1, len(nums)):
-        if nums[i] == nums[i-1] + 1:
-            count += 1
-            if count >= 3: return True
-        else:
-            count = 1
-            
-    # 2. 排除尾數過度重複 (例如 02, 12, 22)
-    tails = [n % 10 for n in nums]
-    tail_counts = Counter(tails)
-    if any(c >= 3 for c in tail_counts.values()):
-        return True
-        
-    # 3. 排除等差數列 (例如 05, 10, 15, 20...)
-    if len(nums) >= 5:
-        d = nums[1] - nums[0]
-        is_arithmetic = True
-        for i in range(1, len(nums)):
-            if nums[i] - nums[i-1] != d:
-                is_arithmetic = False
-                break
-        if is_arithmetic: return True
-            
-    return False
+    @staticmethod
+    def count_consecutive_groups(nums):
+        """計算連號組數"""
+        nums = sorted(nums)
+        groups = 0
+        i = 0
+        while i < len(nums) - 1:
+            if nums[i] + 1 == nums[i+1]:
+                groups += 1
+                while i < len(nums) - 1 and nums[i] + 1 == nums[i+1]:
+                    i += 1
+            else:
+                i += 1
+        return groups
 
-def generate_anti_human_combo(max_num, pick_count, ac_min):
-    """產生一組符合反人性特徵的號碼"""
-    for _ in range(5000):  # 限制嘗試次數防止死迴圈
-        combo = sorted(random.sample(range(1, max_num+1), pick_count))
-        
-        # 條件 A: 必須包含 > 31 的號碼 (避開生日選號潮)
-        if not any(n > 31 for n in combo):
-            continue
-            
-        # 條件 B: 排除常見模式
-        if has_bad_patterns(combo):
-            continue
-            
-        # 條件 C: AC 值門檻過濾
-        ac_val = calculate_ac(combo)
-        if ac_val < ac_min:
-            continue
-            
-        return combo, ac_val
-    return None, 0
+    @staticmethod
+    def get_detailed_comparison(combo, history):
+        """深度比對：計算歷史命中分佈 (聚焦中 3 碼以上)"""
+        target = set(combo)
+        stats = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
+        max_hit = 0
+        for row in history:
+            hit = len(target & set(row))
+            if hit in stats:
+                stats[hit] += 1
+            if hit > max_hit:
+                max_hit = hit
+        return stats, max_hit
 
 # ==========================================
-# Streamlit UI 介面
+# UI Configuration
 # ==========================================
-
-st.set_page_config(page_title="Gauss V6.9.2 反人性版", page_icon="👺", layout="wide")
-
-st.title("👺 Gauss Master V6.9.2 - 反人性戰略選號器")
-st.markdown("這不是預測工具，而是**獎金獨佔最大化策略**工具。")
+st.set_page_config(page_title="Gauss Master Pro V6.8", layout="wide", page_icon="💎")
+st.title("💎 Gauss Master Pro V6.8 - 總和與核心命中版")
+st.markdown("本版本過濾了中 0, 1, 2 碼數據，強化了「總和」與「中 3 碼以上」的深度分析。")
+st.markdown("---")
 
 # 側邊欄設定
-with st.sidebar:
-    st.header("⚙️ 參數設定")
-    game_type = st.selectbox("遊戲模式", ["今彩 539", "大樂透"])
-    
-    if game_type == "今彩 539":
-        max_num, pick_count, default_ac = 39, 5, 6
-    else:
-        max_num, pick_count, default_ac = 49, 6, 8
-        
-    ac_min = st.slider("最低 AC 門檻 (越亂越好)", 1, 10, default_ac)
-    num_sets = st.number_input("產生組數", 1, 100, 5)
+st.sidebar.header("⚙️ 核心研究參數")
+game_type = st.sidebar.selectbox("遊戲模式", ["今彩 539", "大樂透"])
 
-# 主程式執行
-if st.button("🚀 執行反人性掃描"):
-    results_list = []  # 改名以避免衝突
-    
-    for i in range(int(num_sets)):
-        combo, ac_val = generate_anti_human_combo(max_num, pick_count, ac_min)
-        if combo:
-            results_list.append({
-                "組別": f"No.{i+1}", 
-                "推薦號碼": ", ".join(map(str, combo)), 
-                "AC複雜度": ac_val, 
-                "總和": sum(combo)
+if game_type == "今彩 539":
+    max_num, pick_count = 39, 5
+    ac_slider_max = 10
+    default_ac = 6
+else:
+    max_num, pick_count = 49, 6
+    ac_slider_max = 15
+    default_ac = 8
+
+# AC 值調整滑桿
+ac_threshold = st.sidebar.slider("AC 值最小門檻 (複雜度)", 1, ac_slider_max, default_ac)
+
+hot_mode = st.sidebar.select_slider("數字權重偏好", options=["極冷", "偏冷", "平衡", "偏熱", "極熱"], value="平衡")
+max_collision_limit = st.sidebar.slider("禁止出現過大獎的組合 (排除歷史命中 > X)", 1, pick_count, pick_count-1)
+
+uploaded_file = st.file_uploader("📂 上傳歷史 Excel 數據", type=["xlsx"])
+
+if uploaded_file:
+    try:
+        df = pd.read_excel(uploaded_file, header=None, engine='openpyxl')
+        history = []
+        all_nums = []
+
+        for val in df.iloc[:, 1].dropna().astype(str):
+            clean = val.replace(' ', ',').replace('，', ',').replace('、', ',')
+            nums = sorted([int(n) for n in clean.split(',') if n.strip().isdigit()])
+            if len(nums) == pick_count:
+                history.append(nums)
+                all_nums.extend(nums)
+
+        if not history:
+            st.error("格式錯誤，請檢查 Excel 資料。")
+            st.stop()
+
+        # 最近 30 期走勢
+        st.subheader(f"🕵️ 最近 30 期開獎走勢 ({game_type})")
+        recent_data = []
+        for i in range(min(30, len(history))):
+            row = history[i]
+            recent_data.append({
+                "期數": f"前 {i+1} 期",
+                "號碼組合": " , ".join(map(str, row)),
+                "總和": sum(row),
+                "AC 值": GaussResearchEngine.calculate_ac_value(row),
+                "連號組數": GaussResearchEngine.count_consecutive_groups(row)
             })
-    
-    # 檢查是否有結果，防止 DataFrame 報錯
-    if results_list:
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.subheader("📋 策略建議號碼")
-            # 修正處：確保 pd 被正確調用，且 results_list 有內容
-            final_df = pd.DataFrame(results_list)
-            st.dataframe(final_df, use_container_width=True, hide_index=True)
+        st.table(pd.DataFrame(recent_data))
+        st.markdown("---")
 
-        with col2:
-            st.subheader("💡 戰略分析報告")
-            avg_sum = sum([x['總和'] for x in results_list]) / len(results_list)
-            st.metric("平均總和", f"{avg_sum:.1f}")
-            st.success("✅ 避開日期效應 (>31)")
-            st.success(f"✅ 強制複雜度 (AC >= {ac_min})")
-            st.info("模式備註：已過濾等差與三連號")
-
-        # 報告下載功能
-        report_txt = f"Gauss Master V6.9.2 戰略報告\n生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        report_txt += "="*50 + "\n"
-        for r in results_list:
-            report_txt += f"{r['組別']}: {r['推薦號碼']} | AC: {r['AC複雜度']}\n"
+        sums = [sum(r) for r in history]
+        avg_sum = np.mean(sums)
+        counts = Counter(all_nums)
         
-        st.download_button(
-            "📥 下載戰略分析報告",
-            report_txt,
-            file_name=f"AntiHuman_Strategy_{datetime.now().strftime('%Y%m%d')}.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
-    else:
-        st.error("❌ 無法在目前的參數下產生號碼，請嘗試調低側邊欄的 AC 門檻。")
+        # 權重計算
+        num_range = list(range(1, max_num + 1))
+        weights = []
+        for i in num_range:
+            freq = counts.get(i, 0)
+            if hot_mode == "極熱": w = freq ** 2 + 1
+            elif hot_mode == "偏熱": w = freq + 1
+            elif hot_mode == "偏冷": w = 1 / (freq + 1)
+            elif hot_mode == "極冷": w = 1 / (freq ** 2 + 1)
+            else: w = 1
+            weights.append(w)
+
+        if st.button("🚀 啟動總和核心精選"):
+            candidate_pool = []
+            with st.spinner("AI 正在遍歷歷史數據並執行多因子加權評分..."):
+                for _ in range(30000):
+                    res = sorted(random.choices(num_range, weights=weights, k=pick_count))
+                    if len(set(res)) != pick_count: continue
+
+                    s = sum(res)
+                    ac = GaussResearchEngine.calculate_ac_value(res)
+                    consec = GaussResearchEngine.count_consecutive_groups(res)
+
+                    if abs(s - avg_sum) < 30 and ac >= ac_threshold and consec <= 1:
+                        stats, max_hit = GaussResearchEngine.get_detailed_comparison(res, history)
+                        if max_hit <= max_collision_limit:
+                            # 評分邏輯優化：AC(40%) + 總和(40%) + 中3碼穩定度(20%)
+                            score = (ac * 10) - (abs(s - avg_sum) * 0.6) + (stats[3] * 5)
+                            candidate_pool.append({
+                                "combo": res, "sum": s, "ac": ac, "consec": consec,
+                                "max_hit": max_hit, "stats": stats, "score": score
+                            })
+                            if len(candidate_pool) >= 15: break
+
+            if not candidate_pool:
+                st.warning("條件設定下找不到組合，請嘗試調低 AC 門檻。")
+            else:
+                candidate_pool.sort(key=lambda x: x['score'], reverse=True)
+                top_10 = candidate_pool[:10]
+                best_one = top_10[0]
+
+                # --- 第一精選展示 ---
+                st.markdown("### 🌟 AI 最終黃金精選")
+                c1, c2, c3 = st.columns([1.5, 1, 1])
+                with c1:
+                    st.success(f"## ⭐ `{best_one['combo']}`")
+                with c2:
+                    st.write(f"🔢 總和：**{best_one['sum']}**")
+                    st.write(f"📉 AC 值：**{best_one['ac']}**")
+                with c3:
+                    st.write(f"🏆 歷史最高：**{best_one['max_hit']} 碼**")
+                    st.write(f"🧬 綜合評分：**{best_one['score']:.1f}**")
+
+                # --- Top 10 命中矩陣 ---
+                st.markdown("---")
+                st.subheader("📊 Top 1-10 候選組合核心命中統計 (中 3 碼以上)")
+                
+                matrix_data = []
+                for idx, item in enumerate(top_10, 1):
+                    s = item['stats']
+                    matrix_data.append({
+                        "排行": f"Top {idx}",
+                        "號碼組合": " , ".join(map(str, item['combo'])),
+                        "總和": item['sum'],
+                        "中 3 碼次數": f"{s[3]} 次",
+                        "中 4 碼次數": f"{s[4]} 次",
+                        "AC 值": item['ac'],
+                        "AI 綜合評分": round(item['score'], 1)
+                    })
+                st.table(pd.DataFrame(matrix_data))
+
+                # 報告下載
+                report_txt = f"Gauss Master Pro V6.8 報告\n"
+                report_txt += f"分析時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                report_txt += f"AC 門檻: {ac_threshold}\n"
+                report_txt += "="*50 + "\n"
+                report_txt += f"【AI 首選】: {best_one['combo']}\n"
+                report_txt += f"總和: {best_one['sum']}, AC: {best_one['ac']}\n"
+                report_txt += f"戰績: 中3碼({best_one['stats'][3]}次), 中4碼({best_one['stats'][4]}次)\n"
+                report_txt += "="*50 + "\n\n"
+                for idx, item in enumerate(top_10, 1):
+                    s = item['stats']
+                    report_txt += f"Top {idx}: {item['combo']} | 總和: {item['sum']} | 3/4碼命中: ({s[3]}, {s[4]})\n"
+
+                st.download_button(
+                    label="📥 下載完整 V6.8 研究報告",
+                    data=report_txt,
+                    file_name=f"Gauss_V6_8_Report.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+
+    except Exception as e:
+        st.error(f"分析失敗: {e}")
+else:
+    st.info("請上傳歷史數據以啟動總和分析模型。")
 
 st.markdown("---")
-st.caption("Gauss Strategic Analytics | 獨立隨機事件博弈策略")
+st.caption("Gauss Master Pro V6.8 | 總和回歸分析 | 核心命中統計 | AC 值自定義")
 
