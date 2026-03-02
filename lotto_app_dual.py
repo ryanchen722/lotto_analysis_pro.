@@ -1,25 +1,26 @@
 import random
 import pandas as pd
 import streamlit as st
+import numpy as np
 from datetime import datetime
 from collections import Counter
 
 # ==========================================
-# 核心演算法：跨度優化與冷熱分析系統
+# 核心演算法：純物理規律分析 (跨度與連號)
 # ==========================================
 
 def get_metrics(nums):
-    """計算 AC 值、跨度與連號"""
+    """計算物理指標：AC值、跨度、連號"""
     nums = sorted(nums)
-    # AC 值
+    # AC 值 (複雜度)
     diffs = set()
     for i in range(len(nums)):
         for j in range(i+1, len(nums)):
             diffs.add(abs(nums[i] - nums[j]))
     ac = len(diffs) - (len(nums) - 1)
-    # 跨度 (首尾距離)
+    # 跨度 (Span)
     span = nums[-1] - nums[0]
-    # 連號
+    # 連號 (Consecutive)
     max_streak = 1
     current = 1
     for i in range(1, len(nums)):
@@ -30,81 +31,72 @@ def get_metrics(nums):
             current = 1
     return ac, span, max_streak
 
-def analyze_full_trend(history, max_num=39):
-    """分析最近 30 期的盤勢體質"""
+def analyze_patterns(history):
+    """分析歷史數據中的跨度與連號規律"""
     if len(history) < 10:
-        return "數據中斷", "請補足數據", 1.0, 28, {}
+        return None
     
     recent_30 = history[:30]
-    all_nums = [n for d in recent_30 for n in d]
-    counts = Counter(all_nums)
     
-    # 計算平均跨度 (Span)
+    # 1. 跨度數據
     spans = [(d[-1] - d[0]) for d in recent_30]
-    avg_span = sum(spans) / len(spans)
+    avg_span = np.mean(spans)
+    span_std = np.std(spans) # 跨度標準差，看波動大不大
     
-    # 集中度診斷
-    hot_nums = {k: v for k, v in counts.items() if v >= 6}
-    unique_covered = len(counts.keys())
-    coverage_rate = unique_covered / max_num
+    # 2. 連號數據
+    streaks = [get_metrics(d)[2] for d in recent_30]
+    streak_counts = Counter(streaks)
+    # 判斷下一期出現連號的「機率傾向」
+    # 如果最近 5 期都沒連號，理論上回歸機率增加
+    recent_5_streaks = streaks[:5]
+    streak_tendency = 1.0 if any(s > 1 for s in recent_5_streaks) else 1.5
     
-    if len(hot_nums) >= 5:
-        trend = "極端熱平衡"
-        advice = "號碼高度集中（如 08 現象），AI 將嚴格執行避熱並穩定跨度。"
-        weight = 1.3
-    elif coverage_rate > 0.85:
-        trend = "均勻冷回歸"
-        advice = "號碼非常分散，AI 將擴大搜尋範圍並微調跨度。"
-        weight = 1.1
-    else:
-        trend = "標準隨機走勢"
-        advice = "盤勢平穩，維持 Edge-Master 標準跨度約束。"
-        weight = 1.0
-        
-    return trend, advice, weight, avg_span, counts
+    return {
+        "avg_span": avg_span,
+        "span_std": span_std,
+        "span_history": spans,
+        "streak_counts": streak_counts,
+        "streak_tendency": streak_tendency,
+        "all_nums": [n for d in recent_30 for n in d]
+    }
 
-def get_ai_score(combo, counts, t_weight, target_span):
-    """V6.8.8 AI 評分：整合熱度懲罰與跨度精準度"""
+def get_ai_score(combo, patterns):
+    """V6.8.9 AI 物理評分邏輯 (移除人為過濾)"""
     ac, span, streak = get_metrics(combo)
     
-    # 1. 結構分
-    score = ac * 10
+    # 基礎分：AC 值 (越高代表分佈越均勻)
+    score = ac * 12
     
-    # 2. 跨度精準度分 (V6.8.8 核心)
-    # 越接近歷史平均跨度，分數越高
-    span_diff = abs(span - target_span)
-    score -= span_diff * 2.5
+    # 跨度匹配分：越接近歷史平均跨度分數越高
+    span_diff = abs(span - patterns['avg_span'])
+    score -= span_diff * 3.0
     
-    # 3. 連號懲罰
-    if streak >= 3: score -= 35
-    elif streak == 2: score += 10
-    
-    # 4. 熱度懲罰 (避開大眾熱號)
-    for n in combo:
-        freq = counts.get(n, 0)
-        if freq >= 6: score -= 8
-        if freq <= 1: score += 3
+    # 連號匹配分：根據近期連號缺失狀況進行補償
+    if streak == 2:
+        score += (15 * patterns['streak_tendency'])
+    elif streak >= 3:
+        score -= 40 # 三連號依然屬於極低機率事件，予以扣分
         
-    # 5. 總和回歸 (539 中位數 100)
-    score -= abs(sum(combo) - 100) * 0.4
+    # 總和回歸分 (539 中位數 100)
+    score -= abs(sum(combo) - 100) * 0.5
     
-    return round(score * t_weight, 2)
+    return round(score, 2)
 
 # ==========================================
 # Streamlit UI
 # ==========================================
 
-st.set_page_config(page_title="Gauss Pro V6.8.8 Integrated", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Gauss Master Pro V6.8.9", page_icon="🧬", layout="wide")
 
-st.title("🎯 Gauss Master Pro V6.8.8 (跨度優化整合版)")
-st.markdown("針對 V6.8.7 修正：**強化首尾預測凝聚力**，並保留歷史趨勢分析功能。")
+st.title("🧬 Gauss Master Pro V6.8.9 (物理規律強化版)")
+st.markdown("本版本已**移除所有人工過濾器**，完全基於歷史**跨度走勢**與**連號頻率**進行預測。")
 
 with st.sidebar:
-    st.header("📊 數據管理中心")
-    uploaded_file = st.file_uploader("請上傳歷史數據 Excel", type=["xlsx"])
-    st.divider()
+    st.header("📂 數據導入")
+    uploaded_file = st.file_uploader("上傳歷史數據 Excel", type=["xlsx"])
     num_sets = st.slider("推薦組數", 1, 15, 5)
-    st.info("💡 Edge-Master 邏輯：我們會鎖定中間核心號碼，並向外推算最穩定的第一碼與末位碼。")
+    st.divider()
+    st.caption("版本說明：已取消 1-31 生日限制，完全開放所有號碼組合。")
 
 if uploaded_file:
     try:
@@ -116,65 +108,60 @@ if uploaded_file:
                 history.append(sorted(nums))
         
         if history:
-            # 1. 執行診斷
-            trend_name, advice, t_weight, avg_span, freq_counts = analyze_full_trend(history)
+            # 1. 規律分析
+            patterns = analyze_patterns(history)
             
-            # 2. 頂部儀表板
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                st.metric("最近30期體質", trend_name)
-            with col_b:
-                st.metric("歷史平均跨度", f"{avg_span:.1f}")
-            with col_c:
-                st.write(f"🛡️ **AI 戰略建議**：\n{advice}")
-            
-            # 3. 熱度掃描圖表
-            st.subheader("🌡️ 最近 30 期號碼熱度分佈")
-            chart_data = pd.DataFrame({
-                "號碼": [f"{i:02d}" for i in range(1, 40)],
-                "出現次數": [freq_counts.get(i, 0) for i in range(1, 40)]
-            })
-            st.bar_chart(chart_data.set_index("號碼"), color="#FF4B4B")
+            # 2. 顯示數據報告
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("30期平均跨度", f"{patterns['avg_span']:.2f}")
+                st.write(f"波動程度 (標準差): {patterns['span_std']:.2f}")
+            with col2:
+                st.write("連號出現次數 (1=無連號, 2=二連號)")
+                st.bar_chart(pd.DataFrame.from_dict(patterns['streak_counts'], orient='index'))
+            with col3:
+                recent_span_trend = "縮小中" if patterns['span_history'][0] < patterns['avg_span'] else "擴大中"
+                st.metric("當前跨度趨勢", recent_span_trend)
+                st.write("AI 將優先匹配接近平均跨度的組合。")
 
-            # 4. 生成 AI 推薦 (Edge-Master 邏輯)
-            st.subheader("🤖 AI 推薦組合 (強化首尾凝聚)")
+            # 3. 跨度走勢圖
+            st.subheader("📈 最近 30 期跨度 (Span) 走勢")
+            st.line_chart(patterns['span_history'])
+
+            # 4. 生成 AI 推薦
+            st.subheader("🤖 AI 物理規律推薦組合")
             recommendations = []
             attempts = 0
-            while len(recommendations) < num_sets and attempts < 3000:
+            while len(recommendations) < num_sets and attempts < 5000:
                 attempts += 1
+                # 完全隨機取樣 1-39，無人為限制
                 combo = sorted(random.sample(range(1, 40), 5))
-                ac, span, streak = get_metrics(combo)
+                score = get_ai_score(combo, patterns)
                 
-                # 基礎物理過濾
-                if not (20 <= span <= 36): continue
-                if not any(n > 31 for n in combo): continue
-                
-                score = get_ai_score(combo, freq_counts, t_weight, avg_span)
-                
-                if score > 45: # 只取高分
+                # 過濾極低分組合
+                if score > 40:
+                    ac, span, streak = get_metrics(combo)
                     recommendations.append({
                         "推薦組合": ", ".join([f"{x:02d}" for x in combo]),
-                        "AI 評分": score,
-                        "第一碼": f"{combo[0]:02d}",
-                        "末位碼": f"{combo[-1]:02d}",
-                        "跨度": span,
-                        "AC值": ac,
-                        "總和": sum(combo)
+                        "AI 綜合評分": score,
+                        "跨度 (Span)": span,
+                        "連號狀況": "無" if streak == 1 else f"{streak}連號",
+                        "總和": sum(combo),
+                        "AC值": ac
                     })
             
-            rec_df = pd.DataFrame(recommendations).sort_values("AI 評分", ascending=False)
+            rec_df = pd.DataFrame(recommendations).sort_values("AI 綜合評分", ascending=False)
             st.dataframe(rec_df, use_container_width=True, hide_index=True)
             
-            # 5. 數據分析結論
-            st.success(f"✅ 已分析完畢。本期重點：針對首尾偏移，系統已強制鎖定跨度於 {avg_span-3:.0f} ~ {avg_span+3:.0f} 區間。")
-            
+            st.success("✅ 物理規律分析完成。系統已根據歷史跨度與連號慣性優化推薦組合。")
+
         else:
-            st.error("數據解析失敗，請確保號碼位於 Excel 第二欄。")
+            st.error("無法解析號碼，請確認號碼位在 Excel 第二欄。")
     except Exception as e:
-        st.error(f"系統錯誤: {e}")
+        st.error(f"執行錯誤: {e}")
 else:
-    st.info("👋 請上傳歷史數據 Excel 以啟動 Edge-Master 分析引擎。")
+    st.info("👋 請上傳歷史數據。系統將專注於分析跨度（首尾距離）與連號規律，不再進行人為過濾。")
 
 st.markdown("---")
-st.caption("Gauss Master Pro v6.8.8 | Edge-Master 跨度校正系統 | 反人性權重引擎")
+st.caption("Gauss Master Pro v6.8.9 | 物理結構分析引擎 | 移除人為過濾器")
 
