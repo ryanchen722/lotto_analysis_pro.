@@ -6,7 +6,7 @@ from datetime import datetime
 from collections import Counter
 
 # ==========================================
-# 核心演算法：六大物理維度分析系統
+# 核心演算法：五千次全維度深度抽樣系統
 # ==========================================
 
 def get_detailed_metrics(nums):
@@ -35,7 +35,7 @@ def get_detailed_metrics(nums):
     # 4. 尾數重複度 (Last Digit)
     last_digits = [n % 10 for n in nums]
     digit_counts = Counter(last_digits)
-    same_tail_count = max(digit_counts.values()) # 最高重複次數
+    same_tail_count = max(digit_counts.values()) 
     
     # 5. 奇偶比 (Odd/Even)
     odds = len([n for n in nums if n % 2 != 0])
@@ -57,48 +57,54 @@ def analyze_patterns_100(history):
     sample_size = min(len(history), 100)
     recent_data = history[:sample_size]
     
+    # 跨度分析
     spans = [(d[-1] - d[0]) for d in recent_data]
     avg_span = np.mean(spans)
     
+    # 連號傾向分析 (最近10期)
     streaks = [get_detailed_metrics(d)['streak'] for d in recent_data]
-    actual_streak_rate = len([s for s in streaks[:10] if s > 1]) / 10
-    streak_tendency = 1.8 if actual_streak_rate < 0.4 else 1.0
-    
-    # 尾數規律：歷史中同尾現象的頻率
-    tails = [get_detailed_metrics(d)['same_tail'] for d in recent_data]
-    avg_tail_repeat = np.mean(tails) # 通常在 1.5 - 1.8 之間
+    recent_10_streaks = streaks[:10]
+    actual_streak_rate = len([s for s in recent_10_streaks if s > 1]) / 10
+    # 若近期二連號出現頻率低於 40%，提高連號權重獎勵
+    streak_tendency = 2.0 if actual_streak_rate < 0.4 else 1.0
     
     return {
         "avg_span": avg_span,
         "streak_tendency": streak_tendency,
-        "avg_tail": avg_tail_repeat,
         "sample_size": sample_size,
         "history_spans": spans
     }
 
 def get_ai_score(combo, patterns):
-    """V6.9.2 AI 全維度評分邏輯"""
+    """V6.9.3 AI 全維度評分邏輯 (5,000次模擬專用)"""
     m = get_detailed_metrics(combo)
     
-    score = m['ac'] * 12 # AC基礎
+    # 基礎權重：AC值 (確保數字分佈具備足夠的隨機複雜度)
+    score = m['ac'] * 12 
     
-    # 跨度權重
-    score -= abs(m['span'] - patterns['avg_span']) * 4.5
+    # 1. 跨度精準權重 (邊界控制)
+    score -= abs(m['span'] - patterns['avg_span']) * 5.0
     
-    # 連號補償
-    if m['streak'] == 2: score += (22 * patterns['streak_tendency'])
-    elif m['streak'] >= 3: score -= 55
+    # 2. 連號回歸權重
+    if m['streak'] == 2: 
+        score += (25 * patterns['streak_tendency'])
+    elif m['streak'] >= 3: 
+        score -= 60 # 排除低機率三連號
     
-    # 總和平衡
-    score -= abs(m['sum'] - 100) * 0.7
+    # 3. 總和平衡權重 (常態分佈回歸)
+    score -= abs(m['sum'] - 100) * 0.8
     
-    # 尾數平衡 (理想是 1 組同尾，即 same_tail = 2)
-    if m['same_tail'] == 2: score += 15
-    elif m['same_tail'] >= 3: score -= 25 # 三同尾機率過低
+    # 4. 尾數平衡權重 (理想為「一組同尾」)
+    if m['same_tail'] == 2: 
+        score += 20
+    elif m['same_tail'] >= 3: 
+        score -= 30 
     
-    # 奇偶平衡 (理想是 2:3 或 3:2)
-    if m['odds'] in [2, 3]: score += 15
-    else: score -= 20 # 5:0 或 0:5 是大忌
+    # 5. 奇偶平衡權重 (黃金比例 3:2 或 2:3)
+    if m['odds'] in [2, 3]: 
+        score += 20
+    else: 
+        score -= 25
     
     return round(score, 2)
 
@@ -106,20 +112,20 @@ def get_ai_score(combo, patterns):
 # Streamlit UI
 # ==========================================
 
-st.set_page_config(page_title="Gauss Pro V6.9.2", page_icon="🧩", layout="wide")
+st.set_page_config(page_title="Gauss Pro V6.9.3 5K-Sim", page_icon="🧬", layout="wide")
 
-st.title("🧩 Gauss Master Pro V6.9.2 (全維度精選版)")
-st.markdown("本版本在 **1,000 次模擬** 中加入了 **奇偶平衡** 與 **尾數重複規律** 的深度檢索。")
+st.title("🧬 Gauss Master Pro V6.9.3 (5,000次模擬精選版)")
+st.markdown("本版本採取 **5,000 次深度模擬抽樣**，對每一組號碼進行 **六維度權重運算**。")
 
 with st.sidebar:
     st.header("📂 數據導入")
     uploaded_file = st.file_uploader("上傳歷史數據 Excel", type=["xlsx"])
     st.divider()
-    st.write("📊 **新增維度說明：**")
-    st.info("🧬 **尾數重複**：偵測個位數相同規律。")
-    st.info("⚖️ **奇偶平衡**：鎖定黃金比例 (2:3 / 3:2)。")
-    st.write("✅ 模擬規模：1,000 組")
-    st.write("🥇 錄取名額：前 3 名")
+    st.write("📊 **核心執行策略：**")
+    st.info("🔥 **模擬規模：5,000 次**")
+    st.info("🏆 **錄取名額：Top 3 精英**")
+    st.write("✅ 基準：最近 100 期物理慣性")
+    st.write("✅ 維度：跨度/連號/AC/總和/奇偶/尾數")
 
 if uploaded_file:
     try:
@@ -131,51 +137,67 @@ if uploaded_file:
                 history.append(sorted(nums))
         
         if history:
+            # 1. 深度規律分析 (100期)
             patterns = analyze_patterns_100(history)
             
-            # 看板數據
+            # 2. 數據看板
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.metric("100期平均跨度", f"{patterns['avg_span']:.1f}")
+                st.metric(f"最近 {patterns['sample_size']} 期平均跨度", f"{patterns['avg_span']:.1f}")
+                st.caption("AI 將鎖定此距離來配置首尾號碼")
             with c2:
-                st.metric("尾數重複傾向", f"{patterns['avg_tail']:.2f}")
+                st.metric("連號權重補償", f"{patterns['streak_tendency']}x")
+                st.caption("係數越高代表近期連號越缺失")
             with c3:
-                st.write("物理跨度走勢：")
+                st.write("歷史跨度波動 (最近30期)：")
                 st.line_chart(patterns['history_spans'][-30:])
 
-            # 模擬計算
-            all_candidates = []
-            with st.spinner('AI 正在計算全維度權重 (1,000 次模擬)...'):
-                for _ in range(1000):
-                    combo = sorted(random.sample(range(1, 40), 5))
-                    score = get_ai_score(combo, patterns)
-                    m = get_detailed_metrics(combo)
-                    
-                    all_candidates.append({
-                        "推薦組合": ", ".join([f"{x:02d}" for x in combo]),
-                        "AI 綜合評分": score,
-                        "跨度": m['span'],
-                        "奇偶 (奇:偶)": f"{m['odds']}:{5-m['odds']}",
-                        "連號": "無" if m['streak'] == 1 else f"{m['streak']}連",
-                        "尾數重複": "有" if m['same_tail'] > 1 else "無",
-                        "總和": m['sum']
-                    })
+            # 3. 執行 5,000 次模擬抽樣
+            st.subheader(f"🤖 AI 正在進行 5,000 次深度模擬運算...")
+            progress_bar = st.progress(0)
             
-            # 篩選 Top 3
+            all_candidates = []
+            
+            # 模擬計算
+            for i in range(5000):
+                combo = sorted(random.sample(range(1, 40), 5))
+                score = get_ai_score(combo, patterns)
+                m = get_detailed_metrics(combo)
+                
+                all_candidates.append({
+                    "推薦組合": ", ".join([f"{x:02d}" for x in combo]),
+                    "AI 綜合評分": score,
+                    "跨度": m['span'],
+                    "奇偶比 (奇:偶)": f"{m['odds']}:{5-m['odds']}",
+                    "連號狀況": "無" if m['streak'] == 1 else f"{m['streak']}連",
+                    "尾數同尾": "是" if m['same_tail'] > 1 else "否",
+                    "組合總和": m['sum'],
+                    "AC值": m['ac']
+                })
+                
+                # 更新進度條 (每 500 次更新一次)
+                if i % 500 == 0:
+                    progress_bar.progress((i + 500) / 5000)
+            
+            # 4. 篩選 Top 3
             top_3 = pd.DataFrame(all_candidates).sort_values("AI 綜合評分", ascending=False).head(3)
             
-            st.subheader("🥇 本次千次模擬 - 全維度精選 Top 3")
+            st.subheader("🥇 本次 5,000 次模擬 - 最優選 Top 3")
             st.table(top_3)
             
-            st.success("✅ 分析完成！這三組號碼不僅符合跨度規律，更在奇偶與尾數分佈上達到了『數學平衡』。")
+            st.success(f"✅ 深度運算完成。這三組號碼是從五千個隨機樣本中，結構完整性最高、最符合歷史慣性的組合。")
+            
+            # 5. 下載區
+            csv = top_3.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 下載 Top 3 精選報告", csv, "Gauss_V693_Top3.csv", "text/csv")
 
         else:
-            st.error("數據格式錯誤，請檢查 Excel。")
+            st.error("數據格式錯誤，請檢查 Excel 第二欄。")
     except Exception as e:
         st.error(f"系統錯誤: {e}")
 else:
-    st.info("👋 請上傳歷史數據，啟動全維度深度模擬分析。")
+    st.info("👋 請上傳歷史數據。AI 將在背景進行 5,000 次模擬運算並篩選出物理結構最強的三組號碼。")
 
 st.markdown("---")
-st.caption("Gauss Master Pro v6.9.2 | Total Dimension Analytics | 1000-Sim Elite Selection")
+st.caption("Gauss Master Pro v6.9.3 | 5000-Sim Elite Selection | Hexa-Dimensional Analysis")
 
