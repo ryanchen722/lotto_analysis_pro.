@@ -6,23 +6,23 @@ from datetime import datetime
 from collections import Counter
 
 # ==========================================
-# 核心演算法：五萬次海選 + 盲區全息融合系統
+# 核心演算法：五萬次分區破壁模擬系統
 # ==========================================
 
 def get_detailed_metrics(nums):
-    """計算物理指標 (解鎖跨度與奇偶限制)"""
+    """計算物理指標 (全面解除總和與跨度約束)"""
     nums = sorted(nums)
-    # 1. AC 值 (隨機複雜度)
+    # AC 值 (複雜度)
     diffs = set()
     for i in range(len(nums)):
         for j in range(i+1, len(nums)):
             diffs.add(abs(nums[i] - nums[j]))
     ac = len(diffs) - (len(nums) - 1)
     
-    # 2. 跨度 (Span)
     span = nums[-1] - nums[0]
+    last_digit_zone = (nums[-1] - 1) // 13 # 0: 01-13, 1: 14-26, 2: 27-39
     
-    # 3. 連號 (Consecutive)
+    # 連號
     max_streak = 1
     current = 1
     for i in range(1, len(nums)):
@@ -32,51 +32,51 @@ def get_detailed_metrics(nums):
         else:
             current = 1
             
-    # 4. 尾數重複度 (Last Digit)
     last_digits = [n % 10 for n in nums]
-    digit_counts = Counter(last_digits)
-    same_tail_count = max(digit_counts.values()) 
-    
-    # 5. 總和 (Sum)
-    total_sum = sum(nums)
-    
-    # 6. 奇偶
-    odds = len([n for n in nums if n % 2 != 0])
+    same_tail_count = max(Counter(last_digits).values()) 
     
     return {
         "ac": ac, "span": span, "streak": max_streak, 
-        "same_tail": same_tail_count, "sum": total_sum, "odds": odds
+        "same_tail": same_tail_count, "last_zone": last_digit_zone,
+        "sum": sum(nums), "last_num": nums[-1]
     }
 
-def get_ai_score(m, patterns):
-    """V6.9.7 融合權重邏輯"""
-    score = m['ac'] * 20 
+def get_ai_score_v8(m, patterns):
+    """V6.9.8 評分邏輯：專注於隨機亂度，移除位置偏見"""
+    # 提高 AC 值權重，這是隨機開獎的最核心特徵
+    score = m['ac'] * 25 
+    
+    # 連號權重：僅針對二連號做補償
     if m['streak'] == 2: 
-        score += (35 * patterns['streak_tendency'])
+        score += (30 * patterns['streak_tendency'])
     elif m['streak'] >= 3: 
-        score -= 50 
-    score -= abs(m['sum'] - 100) * 1.0
+        score -= 60 
+        
+    # 尾數權重：自然重複獎勵
     if m['same_tail'] == 2: 
-        score += 30
+        score += 35
+        
+    # 移除總和與跨度扣分，讓最後一碼可以落在任何位置
+    
     return round(score, 2)
 
 # ==========================================
 # Streamlit UI
 # ==========================================
 
-st.set_page_config(page_title="Gauss Pro V6.9.7 Fusion", page_icon="♾️", layout="wide")
+st.set_page_config(page_title="Gauss Pro V6.9.8 Unbound", page_icon="🚀", layout="wide")
 
-st.title("♾️ Gauss Master Pro V6.9.7 (全息融合至尊版)")
-st.markdown("本版本在 **50,000 次暴力模擬** 後，將 Top 5 精英組與 **數位盲區 (遺漏號碼)** 進行深度融合運算。")
+st.title("🚀 Gauss Master Pro V6.9.8 (分區破壁版)")
+st.markdown("針對「最後一碼過於偏大」的偏頗進行修正。AI 現在強制打破跨度鎖定，並分析盲區號碼進行全息融合。")
 
 with st.sidebar:
     st.header("📂 數據導入")
     uploaded_file = st.file_uploader("上傳歷史數據 Excel", type=["xlsx"])
     st.divider()
-    st.write("🧬 **融合技術：**")
-    st.info("🔄 **遺漏補償**：將盲區號碼強制嵌入高分結構。")
-    st.info("🧩 **全息校正**：確保最終組合覆蓋率達到最大化。")
-    st.error("🔥 模擬規模：50,000 次")
+    st.write("🛠️ **破壁技術說明：**")
+    st.info("🔓 **解除總和限制**：不再強制接近 100。")
+    st.info("🔓 **解除跨度限制**：允許最後一碼出現在 20 幾甚至更早。")
+    st.info("🧬 **盲區融合**：50,000 次模擬後的遺漏號碼補償。")
 
 if uploaded_file:
     try:
@@ -88,84 +88,93 @@ if uploaded_file:
                 history.append(sorted(nums))
         
         if history:
-            # 分析連號傾向
+            # 分析連號
             sample_size = min(len(history), 100)
             recent_data = history[:sample_size]
             streaks = [get_detailed_metrics(d)['streak'] for d in recent_data]
-            actual_streak_rate = len([s for s in streaks[:15] if s > 1]) / 15
-            patterns = {"streak_tendency": 2.5 if actual_streak_rate < 0.3 else 1.0}
+            streak_rate = len([s for s in streaks[:15] if s > 1]) / 15
+            patterns = {"streak_tendency": 2.2 if streak_rate < 0.4 else 1.0}
 
-            # 階段 1: 五萬次暴力海選 Top 5
-            best_pool = [] 
+            # 階段 1: 五萬次暴力海選 (分區儲存，打破 3 開頭偏頗)
+            # 我們將結果按「最後一碼分區」分類，確保 Top 5 涵蓋不同結尾區間
+            zones_pool = {0: [], 1: [], 2: []}
+            
+            progress_bar = st.progress(0)
             for i in range(50000):
                 combo = sorted(random.sample(range(1, 40), 5))
                 m = get_detailed_metrics(combo)
-                score = get_ai_score(m, patterns)
-                best_pool.append({"combo": combo, "score": score, "metrics": m})
-                if len(best_pool) > 200:
-                    best_pool = sorted(best_pool, key=lambda x: x["score"], reverse=True)[:100]
+                score = get_ai_score_v8(m, patterns)
+                
+                zone = m['last_zone']
+                zones_pool[zone].append({"combo": combo, "score": score, "metrics": m})
+                
+                # 保持每個分區只存前 50 名，優化效能
+                if len(zones_pool[zone]) > 50:
+                    zones_pool[zone] = sorted(zones_pool[zone], key=lambda x: x["score"], reverse=True)[:50]
+                
+                if i % 10000 == 0:
+                    progress_bar.progress((i + 10000) / 50000)
 
-            top_5 = sorted(best_pool, key=lambda x: x["score"], reverse=True)[:5]
-            
-            # 階段 2: 盲區統計
+            # 階段 2: 跨分區選取 Top 5 (確保結尾數字不單一)
+            raw_top_candidates = []
+            # 從 14-26 區 (Zone 1) 強制選 1 組，從 27-39 區 (Zone 2) 選 4 組 (依分佈機率)
+            if zones_pool[1]: raw_top_candidates.append(zones_pool[1][0])
+            for j in range(4):
+                if len(zones_pool[2]) > j: raw_top_candidates.append(zones_pool[2][j])
+
+            # 階段 3: 盲區融合
             selected_nums = set()
-            for item in top_5:
+            for item in raw_top_candidates:
                 selected_nums.update(item["combo"])
             unselected_nums = sorted(list(set(range(1, 40)) - selected_nums))
 
-            # 階段 3: 全息融合 (Holographic Fusion)
-            # 邏輯：從 Top 5 中挑選物理結構最穩定的基礎，將其中一個號碼替換為盲區中最具隨機性的號碼
-            fusion_sets = []
-            
-            # 融合方案 A: 均勻覆蓋組 (從盲區中隨機填補)
-            for idx, base in enumerate(top_5):
-                new_combo = list(base["combo"])
-                # 替換邏輯：保留首尾，替換中間的一個號碼，增加盲區覆蓋
+            final_fusion_results = []
+            for idx, item in enumerate(raw_top_candidates):
+                f_combo = list(item["combo"])
                 if unselected_nums:
-                    replacement = random.choice(unselected_nums)
-                    # 確保不會重複
-                    if replacement not in new_combo:
-                        new_combo[2] = replacement # 替換中心點
-                    unselected_nums.remove(replacement)
+                    # 融合邏輯：從盲區選一個號碼替換第二或第四碼
+                    rep = random.choice(unselected_nums)
+                    if rep not in f_combo:
+                        pos = 1 if idx % 2 == 0 else 3
+                        f_combo[pos] = rep
+                    unselected_nums.remove(rep)
                 
-                new_combo = sorted(new_combo)
-                m_f = get_detailed_metrics(new_combo)
-                fusion_sets.append({
-                    "類型": f"融合組 {idx+1}",
-                    "組合": ", ".join([f"{x:02d}" for x in new_combo]),
-                    "融合前評分": base["score"],
+                f_combo = sorted(f_combo)
+                m_f = get_detailed_metrics(f_combo)
+                final_fusion_results.append({
+                    "推薦組合": ", ".join([f"{x:02d}" for x in f_combo]),
+                    "AI 評分": item["score"],
+                    "最後一碼": f_combo[-1],
                     "跨度": m_f["span"],
-                    "奇偶比": f"{m_f['odds']}:{5-m_f['odds']}",
-                    "連號": "有" if m_f["streak"] > 1 else "無",
+                    "總和": m_f["sum"],
                     "AC值": m_f["ac"]
                 })
 
-            # 顯示結果
-            st.subheader("👑 全息融合至尊五組 (精英 + 盲區號碼)")
-            st.table(pd.DataFrame(fusion_sets))
+            st.subheader("👑 全息融合破壁組 (已打破 3 開頭數字偏頗)")
+            st.table(pd.DataFrame(final_fusion_results))
 
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("🚫 原始盲區統計")
+            # 盲區顯示
+            st.divider()
+            c1, c2 = st.columns(2)
+            with c1:
+                st.write("🚫 **初始盲區號碼**")
                 st.code(", ".join([f"{x:02d}" for x in sorted(list(set(range(1, 40)) - selected_nums))]))
-            with col2:
-                st.subheader("🧬 融合後的最終遺漏")
-                final_selected = set()
-                for fs in fusion_sets:
-                    final_selected.update([int(n) for n in fs["組合"].split(", ")])
-                final_unselected = sorted(list(set(range(1, 40)) - final_selected))
-                st.code(", ".join([f"{x:02d}" for x in final_unselected]))
-                st.caption(f"融合後號碼覆蓋率大幅提升，遺漏數由 {len(set(range(1, 40)) - selected_nums)} 降至 {len(final_unselected)}")
+            with c2:
+                current_selected = set()
+                for res in final_fusion_results:
+                    current_selected.update([int(n) for n in res["推薦組合"].split(", ")])
+                st.write("🧬 **融合後剩餘遺漏**")
+                st.code(", ".join([f"{x:02d}" for x in sorted(list(set(range(1, 40)) - current_selected))]))
 
-            st.success("✅ 全息融合運算完成。這五組號碼在保持物理強度的同時，成功吸收了盲區數位。")
+            st.success("✅ 運算完成！這次推薦特別引入了「非 3 開頭結尾」的組合，整體分佈更符合真實隨機狀態。")
 
         else:
             st.error("Excel 格式錯誤。")
     except Exception as e:
         st.error(f"系統錯誤: {e}")
 else:
-    st.info("👋 請上傳歷史數據，啟動全息融合五萬次暴力模擬。")
+    st.info("👋 請上傳數據，AI 將執行 50,000 次分區破壁模擬，修正最後一碼的偏頗。")
 
 st.markdown("---")
-st.caption("Gauss Master Pro v6.9.7 | Holographic Fusion System | 50,000 Brute-Force")
+st.caption("Gauss Master Pro v6.9.8 | Zone-Unbound Analytics | 50,000 Brute-Force Fusion")
 
