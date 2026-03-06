@@ -7,7 +7,6 @@ import streamlit as st
 # ==========================================
 # Gauss V11 Engine
 # ==========================================
-
 class GaussV11Engine:
 
     @staticmethod
@@ -71,7 +70,7 @@ class GaussV11Engine:
         # 區間
         if not GaussV11Engine.zone_distribution(nums):
             return None
-        # 尾數
+        # 尾碼
         if not GaussV11Engine.tail_distribution(nums):
             return None
         return nums
@@ -79,50 +78,54 @@ class GaussV11Engine:
 # ==========================================
 # Streamlit UI
 # ==========================================
-
-st.title("Gauss Lottery Engine V11 (兼容 CSV/Excel)")
+st.title("Gauss Lottery Engine V11 (完整兼容版)")
 
 uploaded = st.file_uploader("上傳歷史資料 CSV 或 Excel", type=["csv","xlsx"])
 
 if uploaded:
-
     df = None
-
-    # 嘗試讀 CSV
-    if uploaded.name.endswith(".csv"):
-        try:
-            df = pd.read_csv(uploaded)
-        except UnicodeDecodeError:
-            df = pd.read_csv(uploaded, encoding="utf-8-sig")
-        except pd.errors.ParserError:
+    # 自動讀 CSV / Excel 並處理編碼
+    try:
+        if uploaded.name.endswith(".csv"):
+            try:
+                df = pd.read_csv(uploaded)
+            except UnicodeDecodeError:
+                df = pd.read_csv(uploaded, encoding="utf-8-sig")
+            except pd.errors.ParserError:
+                df = pd.read_excel(uploaded, header=None)
+        else:
             df = pd.read_excel(uploaded, header=None)
-    else:
-        df = pd.read_excel(uploaded, header=None)
+    except Exception as e:
+        st.error(f"讀取檔案失敗: {e}")
+        df = None
 
-    # 將數字整理成列表
-    history = []
-    for row in df.iloc[:,1:7].values.tolist():
-        nums = [int(n) for n in row if pd.notna(n)]
-        if len(nums) == 6:
-            history.append(nums)
+    if df is not None:
+        # 整理歷史號碼
+        history = []
+        for row in df.iloc[:,1:7].values.tolist():
+            nums = [int(str(n).strip()) for n in row if pd.notna(n) and str(n).strip().isdigit()]
+            if len(nums) == 6:
+                history.append(nums)
 
-    nums_all = np.array(history).flatten()
-    freq = Counter(nums_all)
-    history_set = set(tuple(sorted(h)) for h in history)
+        if not history:
+            st.error("歷史資料讀取失敗或格式錯誤，請檢查檔案內容")
+        else:
+            nums_all = np.array(history).flatten()
+            freq = Counter(nums_all)
+            history_set = set(tuple(sorted(h)) for h in history)
 
-    st.subheader("歷史號碼頻率")
-    st.write(freq)
+            st.subheader("歷史號碼頻率")
+            st.write(freq)
 
-    # 生成推薦號碼
-    results = []
-    while len(results) < 10:
-        r = GaussV11Engine.generate_numbers(freq)
-        if r and tuple(r) not in history_set and r not in results:
-            results.append(r)
+            # 生成推薦號碼
+            results = []
+            while len(results) < 10:
+                r = GaussV11Engine.generate_numbers(freq)
+                if r and tuple(r) not in history_set and r not in results:
+                    results.append(r)
 
-    st.subheader("推薦號碼")
-    for r in results:
-        st.write(r)
-
+            st.subheader("推薦號碼")
+            for r in results:
+                st.write(r)
 else:
     st.info("請上傳 CSV 或 Excel 歷史資料")
