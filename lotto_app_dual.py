@@ -5,9 +5,9 @@ from collections import Counter
 import streamlit as st
 
 # ==========================================
-# Gauss V11 Engine
+# Gauss V9 Engine (Excel 專用)
 # ==========================================
-class GaussV11Engine:
+class GaussV9Engine:
 
     @staticmethod
     def calculate_ac_value(nums):
@@ -56,50 +56,35 @@ class GaussV11Engine:
         weights = [1 + freq.get(n,0)*0.6 for n in numbers]
         result = set()
         while len(result) < 6:
-            n = GaussV11Engine.weighted_choice(numbers, weights)
+            n = GaussV9Engine.weighted_choice(numbers, weights)
             result.add(n)
         nums = sorted(result)
         # AC
-        ac = GaussV11Engine.calculate_ac_value(nums)
+        ac = GaussV9Engine.calculate_ac_value(nums)
         if ac < 3 or ac > 10:
             return None
         # 奇偶
-        odd,even = GaussV11Engine.odd_even_ratio(nums)
+        odd,even = GaussV9Engine.odd_even_ratio(nums)
         if odd < 2 or even < 2:
             return None
         # 區間
-        if not GaussV11Engine.zone_distribution(nums):
+        if not GaussV9Engine.zone_distribution(nums):
             return None
         # 尾碼
-        if not GaussV11Engine.tail_distribution(nums):
+        if not GaussV9Engine.tail_distribution(nums):
             return None
         return nums
 
 # ==========================================
 # Streamlit UI
 # ==========================================
-st.title("Gauss Lottery Engine V11 (完整兼容版)")
+st.title("Gauss Lottery Engine V9 (Excel 專用)")
 
-uploaded = st.file_uploader("上傳歷史資料 CSV 或 Excel", type=["csv","xlsx"])
+uploaded = st.file_uploader("上傳歷史資料 Excel", type=["xlsx"])
 
 if uploaded:
-    df = None
-    # 自動讀 CSV / Excel 並處理編碼
     try:
-        if uploaded.name.endswith(".csv"):
-            try:
-                df = pd.read_csv(uploaded)
-            except UnicodeDecodeError:
-                df = pd.read_csv(uploaded, encoding="utf-8-sig")
-            except pd.errors.ParserError:
-                df = pd.read_excel(uploaded, header=None)
-        else:
-            df = pd.read_excel(uploaded, header=None)
-    except Exception as e:
-        st.error(f"讀取檔案失敗: {e}")
-        df = None
-
-    if df is not None:
+        df = pd.read_excel(uploaded, header=None)
         # 整理歷史號碼
         history = []
         for row in df.iloc[:,1:7].values.tolist():
@@ -120,12 +105,14 @@ if uploaded:
             # 生成推薦號碼
             results = []
             while len(results) < 10:
-                r = GaussV11Engine.generate_numbers(freq)
+                r = GaussV9Engine.generate_numbers(freq)
                 if r and tuple(r) not in history_set and r not in results:
                     results.append(r)
 
             st.subheader("推薦號碼")
             for r in results:
                 st.write(r)
+    except Exception as e:
+        st.error(f"讀取 Excel 檔案失敗: {e}")
 else:
-    st.info("請上傳 CSV 或 Excel 歷史資料")
+    st.info("請上傳 Excel 歷史資料")
