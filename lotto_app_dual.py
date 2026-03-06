@@ -126,7 +126,7 @@ if uploaded_file:
             progress_bar=st.progress(0)
             batch_size=10000
             all_top=[]
-            for i in range(0,570000,batch_size):
+            for i in range(0,575757,batch_size):
                 combos=[sorted(random.sample(range(1,40),5)) for _ in range(batch_size)]
                 metrics_list=get_metrics_batch(combos)
                 scores=get_god_score_batch(metrics_list,patterns)
