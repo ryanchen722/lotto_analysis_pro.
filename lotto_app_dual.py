@@ -1,270 +1,160 @@
-import streamlit as st
 import pandas as pd
 import numpy as np
-import itertools
+import random
 from collections import Counter
+import streamlit as st
 
 # ==========================================
-# 基本指標
+# Gauss V11 Engine
 # ==========================================
 
-def get_metrics(nums):
+class GaussV11Engine:
 
-    nums = sorted(nums)
+    # AC值
+    @staticmethod
+    def calculate_ac_value(nums):
+        diffs = set()
+        for i in range(len(nums)):
+            for j in range(i+1, len(nums)):
+                diffs.add(abs(nums[j] - nums[i]))
+        return len(diffs) - (len(nums) - 1)
 
-    diffs=set()
-    for i in range(len(nums)):
-        for j in range(i+1,len(nums)):
-            diffs.add(nums[j]-nums[i])
+    # 奇偶比例
+    @staticmethod
+    def odd_even_ratio(nums):
+        odd = sum(n % 2 for n in nums)
+        even = len(nums) - odd
+        return odd, even
 
-    ac=len(diffs)-(len(nums)-1)
+    # 區間分布
+    @staticmethod
+    def zone_distribution(nums):
 
-    span=nums[-1]-nums[0]
+        z1 = sum(1 for n in nums if n <= 10)
+        z2 = sum(1 for n in nums if 11 <= n <= 20)
+        z3 = sum(1 for n in nums if 21 <= n <= 30)
+        z4 = sum(1 for n in nums if 31 <= n <= 40)
+        z5 = sum(1 for n in nums if n >= 41)
 
-    odd=sum(n%2 for n in nums)
-    even=5-odd
+        zones = [z1,z2,z3,z4,z5]
 
-    gaps=[nums[i]-nums[i-1] for i in range(1,5)]
+        if max(zones) > 3:
+            return False
 
-    return{
-        "ac":ac,
-        "span":span,
-        "odd":odd,
-        "even":even,
-        "sum":sum(nums),
-        "gaps":gaps,
-        "set":set(nums)
-    }
+        return True
 
-# ==========================================
-# 區間模型
-# ==========================================
+    # 尾數分布
+    @staticmethod
+    def tail_distribution(nums):
 
-def zone_score(nums):
+        tails = [n % 10 for n in nums]
 
-    z1=sum(1 for n in nums if 1<=n<=13)
-    z2=sum(1 for n in nums if 14<=n<=26)
-    z3=sum(1 for n in nums if 27<=n<=39)
+        count = Counter(tails)
 
-    pattern=(z1,z2,z3)
+        if max(count.values()) > 2:
+            return False
 
-    if pattern==(2,2,1):
-        return 40
-    elif pattern==(1,2,2):
-        return 35
-    elif pattern==(2,1,2):
-        return 25
-    else:
-        return -10
+        return True
 
-# ==========================================
-# 尾碼模型
-# ==========================================
+    # 權重抽樣
+    @staticmethod
+    def weighted_choice(numbers, weights):
 
-def last_number_score(nums):
+        total = sum(weights)
+        r = random.uniform(0,total)
 
-    last=nums[-1]
+        upto = 0
 
-    if 21<=last<=26:
-        return 40
-    elif 27<=last<=31:
-        return 30
-    elif 32<=last<=34:
-        return 10
-    elif last>=35:
-        return -20
-    else:
-        return 5
+        for n,w in zip(numbers,weights):
 
-# ==========================================
-# 連號模型
-# ==========================================
+            if upto + w >= r:
+                return n
 
-def streak_score(nums):
+            upto += w
 
-    nums=sorted(nums)
+        return numbers[-1]
 
-    streak=1
-    current=1
+    # 生成號碼
+    @staticmethod
+    def generate_numbers(freq):
 
-    for i in range(1,5):
+        numbers = list(range(1,50))
 
-        if nums[i]==nums[i-1]+1:
-            current+=1
-            streak=max(streak,current)
-        else:
-            current=1
+        weights = []
 
-    if streak==1:
-        return 30
-    elif streak==2:
-        return 25
-    else:
-        return -50
+        for n in numbers:
 
-# ==========================================
-# 歷史分析
-# ==========================================
+            hot = freq.get(n,0)
 
-def analyze_history(history):
+            # 冷號補償
+            w = 1 + hot*0.6
 
-    flat=[n for draw in history for n in draw]
+            weights.append(w)
 
-    counts=Counter(flat)
+        result = set()
 
-    hot=[n for n,_ in counts.most_common(10)]
-    cold=[n for n,_ in counts.most_common()[-10:]]
+        while len(result) < 6:
 
-    return{
-        "hot":hot,
-        "cold":cold,
-        "counts":counts
-    }
+            n = GaussV11Engine.weighted_choice(numbers,weights)
 
-# ==========================================
-# Markov模型
-# ==========================================
+            result.add(n)
 
-def markov_matrix(history):
+        nums = sorted(result)
 
-    matrix=np.zeros((40,40))
+        # AC值
+        ac = GaussV11Engine.calculate_ac_value(nums)
 
-    for i in range(len(history)-1):
+        if ac < 3 or ac > 10:
+            return None
 
-        a=history[i]
-        b=history[i+1]
+        # 奇偶
+        odd,even = GaussV11Engine.odd_even_ratio(nums)
 
-        for x in a:
-            for y in b:
-                matrix[x][y]+=1
+        if odd < 2 or even < 2:
+            return None
 
-    return matrix
+        # 區間
+        if not GaussV11Engine.zone_distribution(nums):
+            return None
+
+        # 尾數
+        if not GaussV11Engine.tail_distribution(nums):
+            return None
+
+        return nums
+
 
 # ==========================================
-# 評分系統
+# Streamlit
 # ==========================================
 
-def score_combo(nums,patterns):
+st.title("Gauss Lottery Engine V11")
 
-    m=get_metrics(nums)
+uploaded = st.file_uploader("上傳歷史開獎 CSV")
 
-    score=0
+if uploaded:
 
-    # AC
-    score+=m["ac"]*30
+    df = pd.read_csv(uploaded)
 
-    # odd even
-    if (m["odd"],m["even"]) in [(3,2),(2,3)]:
-        score+=35
-    elif (m["odd"],m["even"])==(5,0) or (m["odd"],m["even"])==(0,5):
-        score-=40
+    history = df.iloc[:,1:7].values.tolist()
 
-    # span
-    if 18<=m["span"]<=34:
-        score+=25
+    nums = np.array(history).flatten()
 
-    # sum
-    score-=abs(m["sum"]-100)*0.1
+    freq = Counter(nums)
 
-    # hot numbers
-    hot=len(m["set"].intersection(patterns["hot"]))
+    history_set = set(tuple(sorted(h)) for h in history)
 
-    if 1<=hot<=2:
-        score+=40
-    elif hot>=4:
-        score-=30
+    results = []
 
-    # zone
-    score+=zone_score(nums)
+    while len(results) < 10:
 
-    # last digit
-    score+=last_number_score(nums)
+        r = GaussV11Engine.generate_numbers(freq)
 
-    # streak
-    score+=streak_score(nums)
+        if r and tuple(r) not in history_set and r not in results:
 
-    return score
+            results.append(r)
 
-# ==========================================
-# Streamlit UI
-# ==========================================
+    st.subheader("推薦號碼")
 
-st.set_page_config(page_title="Gauss Master Pro V10",layout="wide")
-
-st.title("💎 Gauss Master Pro V10")
-
-uploaded_file=st.file_uploader("上傳歷史資料 Excel",type=["xlsx"])
-
-if uploaded_file:
-
-    df=pd.read_excel(uploaded_file,header=None)
-
-    history=[]
-
-    for val in df.iloc[:,1].dropna().astype(str):
-
-        nums=[int(x) for x in val.replace('、',',').replace(' ',',').split(',') if x.isdigit()]
-
-        if len(nums)==5:
-            history.append(sorted(nums))
-
-    patterns=analyze_history(history)
-
-    st.subheader("🔥 熱號")
-
-    st.write(patterns["hot"])
-
-    st.subheader("❄️ 冷號")
-
-    st.write(patterns["cold"])
-
-    st.subheader("⚡ 全組合計算")
-
-    combos=itertools.combinations(range(1,40),5)
-
-    best=[]
-
-    progress=st.progress(0)
-
-    total=575757
-    i=0
-
-    for c in combos:
-
-        s=score_combo(c,patterns)
-
-        best.append((c,s))
-
-        i+=1
-
-        if i%10000==0:
-            progress.progress(i/total)
-
-    best=sorted(best,key=lambda x:x[1],reverse=True)[:20]
-
-    result=[]
-
-    for c,s in best:
-
-        m=get_metrics(c)
-
-        result.append({
-
-            "組合":", ".join(f"{x:02d}" for x in c),
-            "Score":round(s,2),
-            "AC":m["ac"],
-            "Odd":m["odd"],
-            "Even":m["even"],
-            "Sum":m["sum"]
-
-        })
-
-    st.subheader("👑 Top 20 推薦組合")
-
-    st.table(pd.DataFrame(result))
-
-    st.success("計算完成")
-
-else:
-
-    st.info("請上傳歷史資料")
+    for r in results:
+        st.write(r)
