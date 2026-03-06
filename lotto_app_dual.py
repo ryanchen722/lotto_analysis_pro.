@@ -126,14 +126,14 @@ if uploaded_file:
             progress_bar=st.progress(0)
             batch_size=10000
             all_top=[]
-            for i in range(0,575757,batch_size):
+            for i in range(0,570000,batch_size):
                 combos=[sorted(random.sample(range(1,40),5)) for _ in range(batch_size)]
                 metrics_list=get_metrics_batch(combos)
                 scores=get_god_score_batch(metrics_list,patterns)
                 for combo,score,m in zip(combos,scores,metrics_list):
                     combo=adjust_last_number(combo)
                     all_top.append({"combo":combo,"score":score,"metrics":m})
-                progress_bar.progress((i+batch_size)/575757)
+                progress_bar.progress((i+batch_size)/570000)
 
             # Top100 分數最高組合
             all_top=sorted(all_top,key=lambda x:x['score'],reverse=True)[:100]
