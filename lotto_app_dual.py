@@ -1,21 +1,15 @@
 import random
-import pandas as pd
+import pd as pd
 import streamlit as st
 import numpy as np
 import re
 from collections import Counter
 
 # ==========================================
-# 核心計算引擎 (V15.6 彈性區間版)
+# 核心計算引擎 (V15.7 嚴格區間版)
 # ==========================================
 
 def analyze_full_history(history):
-    """
-    分析數據庫：找出熱門號與長期遺漏號
-    """
-    all_draws = [num for sublist in history for num in sublist]
-    counts = Counter(all_draws)
-    
     # 遺漏號分析 (最近 15 期未出的冷門黑馬)
     recent_15_draws = [num for sublist in history[:15] for num in sublist]
     missing_numbers = [n for n in range(1, 40) if n not in recent_15_draws]
@@ -64,47 +58,45 @@ def get_god_score_batch(metrics_list, patterns, trend_mode):
         first_num = nums[0]
         s = m['sum']
         
-        # --- 1. 戰略模式：首碼正負 5 區間化 ---
+        # --- 1. 戰略模式：首碼區間 (嚴格鎖定) ---
         if "強力回歸" in trend_mode:
-            # 中心 06, 區間 01-11
-            dist_center = abs(first_num - 6)
-            if dist_center <= 5: 
-                base += 110 - (dist_center * 5)
+            # 中心 06, 區間 [01 - 11]
+            if 1 <= first_num <= 11:
+                dist_06 = abs(first_num - 6)
+                base += 150 - (dist_06 * 5)
             else:
-                base -= (dist_center - 5) * 35
+                base -= 1000 # 絕對淘汰
             target_sum = 90
             
-        else: # 高位震盪模式
-            # 中心 15, 區間 10-20
-            dist_center = abs(first_num - 15)
-            if dist_center <= 5: 
-                base += 125 - (dist_center * 5)
+        else: # 高位震盪模式 (咖啡震盪)
+            # 中心 15, 區間 [10 - 20]
+            if 10 <= first_num <= 20:
+                dist_15 = abs(first_num - 15)
+                base += 150 - (dist_15 * 5)
             else:
-                base -= (dist_center - 5) * 40
+                base -= 1000 # 絕對淘汰
             target_sum = 130
 
-        # --- 2. 總和正負 15 彈性緩衝 ---
+        # --- 2. 總和區間 [目標 ± 15] 彈性緩衝 ---
         sum_dist = abs(s - target_sum)
         if sum_dist <= 15:
-            # 區間內給予穩定獎勵，扣分極輕
-            base += 35 - (sum_dist * 1.5)
+            base += 50 - (sum_dist * 2)
         else:
-            # 超出區間才開始重罰
-            base -= (sum_dist - 15) * 5.0
+            base -= (sum_dist - 15) * 20.0 # 區間外強力扣分
         
         # --- 3. 歷史補償與避險 ---
         missing_hits = len(set(nums).intersection(patterns['missing']))
-        base += (missing_hits * 18)
-        
+        base += (missing_hits * 15)
         danger_hits = len(set(nums).intersection(patterns['danger_numbers']))
-        base -= (danger_hits * 160)
+        base -= (danger_hits * 250)
 
         # --- 4. 科學過濾 ---
         if m['streak'] == 2: base += 45
-        elif m['streak'] >= 3: base -= 150
+        elif m['streak'] >= 3: base -= 250
         if m['odd'] in [2, 3]: base += 40
             
-        entropy = random.uniform(0, 50) 
+        # 保持極低熵值，讓規則主導結果
+        entropy = random.uniform(0, 15) 
         scores.append(round(base + entropy, 2))
     return scores
 
@@ -112,8 +104,9 @@ def get_god_score_batch(metrics_list, patterns, trend_mode):
 # UI 介面
 # ==========================================
 
-st.set_page_config(page_title="Gauss Master V15.6", page_icon="💎", layout="wide")
-st.title("💎 Gauss Master Pro V15.6 彈性戰略版")
+import pandas as pd
+st.set_page_config(page_title="Gauss Master V15.7", page_icon="🎯", layout="wide")
+st.title("🎯 Gauss Master Pro V15.7 嚴格戰略版")
 
 st.sidebar.header("🕹️ 指揮控制中心")
 trend_mode = st.sidebar.radio(
@@ -122,13 +115,13 @@ trend_mode = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.write("**戰略參數：**")
+st.sidebar.write("**⚠️ 嚴格約束中：**")
 if "回歸" in trend_mode:
-    st.sidebar.info("🎯 首碼範圍：01 - 11\n\n⚖️ 總和範圍：75 - 105")
+    st.sidebar.info("🎯 首碼必須：01 - 11\n\n⚖️ 總和必須：75 - 105")
 else:
-    st.sidebar.warning("🔥 首碼範圍：10 - 20\n\n⚖️ 總和範圍：115 - 145")
+    st.sidebar.warning("🔥 首碼必須：10 - 20\n\n⚖️ 總和必須：115 - 145")
 
-uploaded_file = st.file_uploader("上傳 539 歷史 Excel (第一列需為最新一期)", type=["xlsx"])
+uploaded_file = st.file_uploader("上傳 539 歷史 Excel", type=["xlsx"])
 
 if uploaded_file:
     try:
@@ -144,9 +137,9 @@ if uploaded_file:
 
         if history:
             patterns = analyze_full_history(history)
-            st.success(f"✅ 資料載入成功！最新期開出：{history[0]}")
+            st.success(f"✅ 資料載入成功！最新開獎：{history[0]}")
             
-            if st.button("啟動 57 萬次彈性模擬"):
+            if st.button("啟動 57 萬次嚴格模擬"):
                 progress_bar = st.progress(0)
                 all_candidates = []
                 batch_size = 15000
@@ -158,34 +151,33 @@ if uploaded_file:
                     scores = get_god_score_batch(metrics, patterns, trend_mode)
                     
                     for m, s in zip(metrics, scores):
-                        if s > 220: # 提高優選門檻
+                        if s > 150: # 嚴格邏輯下基礎分較穩定
                             all_candidates.append({
                                 "combo": m['nums'], 
                                 "score": s, 
                                 "sum": m['sum'], 
-                                "odd": m['odd'],
-                                "streak": m['streak']
+                                "odd": m['odd']
                             })
                     progress_bar.progress((i + batch_size) / total_sims)
                 
-                final_top = sorted(all_candidates, key=lambda x: x['score'], reverse=True)[:5]
-                st.subheader(f"👑 {trend_mode} - 精選建議")
-                
-                res_df = []
-                for idx, item in enumerate(final_top):
-                    c = item['combo']
-                    res_df.append({
-                        "排名": f"Top {idx+1}",
-                        "推薦組合": ", ".join([f"{x:02d}" for x in c]),
-                        "總和": item['sum'],
-                        "首碼": c[0],
-                        "奇偶比": f"{item['odd']}:{5-item['odd']}",
-                        "連號": "有" if item['streak'] == 2 else "無",
-                        "評分": item['score']
-                    })
-                st.table(pd.DataFrame(res_df))
-                st.balloons()
+                if all_candidates:
+                    final_top = sorted(all_candidates, key=lambda x: x['score'], reverse=True)[:5]
+                    st.subheader(f"👑 {trend_mode} - 精選天選組合")
+                    
+                    res_df = []
+                    for idx, item in enumerate(final_top):
+                        c = item['combo']
+                        res_df.append({
+                            "排名": f"Top {idx+1}",
+                            "推薦組合": ", ".join([f"{x:02d}" for x in c]),
+                            "總和": item['sum'],
+                            "首碼": c[0],
+                            "奇偶比": f"{item['odd']}:{5-item['odd']}",
+                            "評分": item['score']
+                        })
+                    st.table(pd.DataFrame(res_df))
+                    st.balloons()
+                else:
+                    st.error("此嚴格條件下未能在 57 萬次模擬中找到符合規定的組合，請重新啟動模擬。")
     except Exception as e:
-        st.error(f"執行出錯: {e}")
-else:
-    st.info("👋 請上傳 Excel 檔案以開始模擬。")
+        st.error(f"程式執行出錯: {e}")
