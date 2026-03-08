@@ -6,7 +6,7 @@ import re
 from collections import Counter
 
 # ==========================================
-# 核心計算引擎 (V15.9 多樣化優化版)
+# 核心計算引擎 (V15.9.1 旗艦動畫版)
 # ==========================================
 
 def analyze_full_history(history):
@@ -15,7 +15,7 @@ def analyze_full_history(history):
     danger_numbers = set()
     if len(history) >= 2:
         danger_numbers = set(history[0]).intersection(set(history[1]))
-    return {"missing": missing_numbers, "danger_numbers": danger_numbers}
+    return {"missing": missing_numbers, "danger_numbers": danger_numbers, "latest": history[0]}
 
 def get_metrics_batch(combos):
     metrics_list = []
@@ -45,31 +45,29 @@ def get_god_score_batch(metrics_list, patterns, trend_mode):
         nums = m['nums']
         first_num = nums[0]
         s = m['sum']
-        base = m['ac'] * 20 # 降低基礎權重，讓位給區間邏輯
+        base = m['ac'] * 20 
         
-        # --- 戰略約束 (區間內一律平等加分) ---
+        # --- 戰略約束 (區間內一律加分，區間外制裁) ---
         if "強力回歸" in trend_mode:
-            if 1 <= first_num <= 11: base += 200 # 只要在 06±5 內就拿高分
-            else: base -= 5000 # 嚴格制裁
+            if 1 <= first_num <= 11: base += 200 
+            else: base -= 5000 
             target_sum, sum_margin = 90, 15
         else:
-            if 10 <= first_num <= 20: base += 200 # 只要在 15±5 內就拿高分
+            if 10 <= first_num <= 20: base += 200 
             else: base -= 5000
             target_sum, sum_margin = 130, 15
 
         # --- 總和約束 ---
-        if abs(s - target_sum) <= sum_margin: base += 100
+        if abs(s - target_sum) <= sum_margin: base += 120
         else: base -= 5000
 
-        # --- 基礎過濾 ---
-        if m['streak'] == 2: base += 30
-        if m['odd'] in [2, 3]: base += 30
-        
-        # --- 歷史避險 ---
+        # --- 基礎過濾與避險 ---
+        if m['streak'] == 2: base += 35
+        if m['odd'] in [2, 3]: base += 35
         danger_hits = len(set(nums).intersection(patterns['danger_numbers']))
-        base -= (danger_hits * 300)
+        base -= (danger_hits * 350)
 
-        # 提高熵值 (隨機性)，範圍加大到 100，確保組合不重複
+        # 高熵值隨機性 (0-100)，解決結果重複的問題
         entropy = random.uniform(0, 100) 
         scores.append(round(base + entropy, 2))
     return scores
@@ -78,13 +76,20 @@ def get_god_score_batch(metrics_list, patterns, trend_mode):
 # UI 介面
 # ==========================================
 
-st.set_page_config(page_title="Gauss Master V15.9", page_icon="🎯", layout="wide")
-st.title("🎯 Gauss Master Pro V15.9 多樣化戰略版")
+st.set_page_config(page_title="Gauss Master V15.9.1", page_icon="🎯", layout="wide")
+st.title("🎯 Gauss Master Pro V15.9.1 旗艦戰略版")
 
-st.sidebar.header("🕹️ 指揮中心")
+# 側邊欄控制
+st.sidebar.header("🕹️ 指揮指揮中心")
 trend_mode = st.sidebar.radio("走勢預測：", ("強力回歸 (06±5, 總和 90±15)", "高位震盪 (15±5, 總和 130±15)"))
 
-uploaded_file = st.file_uploader("上傳歷史 Excel", type=["xlsx"])
+st.sidebar.markdown("---")
+if "回歸" in trend_mode:
+    st.sidebar.info("🎯 **戰略鎖定**：小號反彈\n\n⚖️ **目標**：首碼 01-11 / 總和 75-105")
+else:
+    st.sidebar.warning("🔥 **戰略鎖定**：高位震盪\n\n⚖️ **目標**：首碼 10-20 / 總和 115-145")
+
+uploaded_file = st.file_uploader("請上傳歷史 Excel 檔案 (xlsx)", type=["xlsx"])
 
 if uploaded_file:
     try:
@@ -96,28 +101,51 @@ if uploaded_file:
 
         if history:
             patterns = analyze_full_history(history)
-            if st.button("啟動 57 萬次多樣化模擬"):
+            
+            # --- 顯示最新一期資訊 ---
+            st.markdown(f"### 📅 最新一期開獎紀錄：`{', '.join([f'{x:02d}' for x in patterns['latest']])}`")
+            st.divider()
+            
+            if st.button("🚀 啟動 57 萬次多樣化戰略模擬"):
                 progress_bar = st.progress(0)
+                status_text = st.empty()
                 all_candidates = []
-                for i in range(38): # 570,000 / 15,000 = 38
+                
+                for i in range(38):
+                    status_text.text(f"正在進行第 {i+1}/38 批次深度計算...")
                     raw = [random.sample(range(1, 40), 5) for _ in range(15000)]
                     metrics = get_metrics_batch(raw)
                     scores = get_god_score_batch(metrics, patterns, trend_mode)
                     for m, s in zip(metrics, scores):
-                        if s > 0: # 只要是正分，代表完全符合你的區間
+                        if s > 0: # 正分代表完全符合你的戰略要求
                             all_candidates.append({"combo": m['nums'], "score": s, "sum": m['sum']})
                     progress_bar.progress((i+1)/38)
                 
+                status_text.success("✅ 570,000 次模擬計算完成！")
+                
                 if all_candidates:
-                    # 從合格池中隨機打亂，再選出最高分的
+                    # 隨機打亂後排序，確保每次結果都不同
                     random.shuffle(all_candidates) 
                     final_top = sorted(all_candidates, key=lambda x: x['score'], reverse=True)[:5]
                     
-                    res = []
+                    st.subheader(f"👑 {trend_mode} - 推薦天選組合")
+                    
+                    res_display = []
                     for idx, item in enumerate(final_top):
-                        res.append({"排名": f"Top {idx+1}", "推薦組合": ", ".join([f"{x:02d}" for x in item['combo']]), "總和": item['sum'], "首碼": item['combo'][0]})
-                    st.table(pd.DataFrame(res))
-                    st.balloons()
+                        res_display.append({
+                            "排名": f"Top {idx+1}",
+                            "推薦組合": ", ".join([f"{x:02d}" for x in item['combo']]),
+                            "總和": item['sum'],
+                            "首碼": f"{item['combo'][0]:02d}",
+                            "綜合評分": item['score']
+                        })
+                    
+                    st.table(pd.DataFrame(res_display))
+                    st.balloons() # 勝利動畫
                 else:
-                    st.warning("找不到符合條件的組合。")
-    except Exception as e: st.error(f"出錯: {e}")
+                    st.warning("⚠️ 在目前的嚴格約束下找不到符合條件的組合，請嘗試重新模擬。")
+                    
+    except Exception as e:
+        st.error(f"❌ 程式執行出錯: {e}")
+else:
+    st.info("👋 歡迎指揮官！請先上傳 Excel 檔案以開啟分析。")
