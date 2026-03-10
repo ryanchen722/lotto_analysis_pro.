@@ -5,157 +5,125 @@ import numpy as np
 import re
 from collections import Counter
 import itertools
-import os
 
 # ==========================================
-# 核心函數
+# 核心引擎：V17.3 終極平衡評分邏輯
 # ==========================================
 
-def calculate_ac(nums):
-    return len(set(abs(a-b) for a,b in itertools.combinations(nums,2))) - 4
+def get_god_score_batch(metrics_list, patterns):
+    scores = []
+    for m in metrics_list:
+        nums = m['nums']
+        first, last = nums[0], nums[-1]
+        
+        # --- 1. AC 值 (基礎複雜度) ---
+        # 確保號碼足夠亂，这是 539 的核心開獎邏輯
+        base = m['ac'] * 50 
 
-def score_combo(nums, patterns, avg_first, tail_probs):
-    first = nums[0]
-    last = nums[-1]
-    spread = last - first
-    ac = calculate_ac(nums)
-    
-    base = 0
-    base += ac * 35  # AC值
-    base += 220 if 22 <= spread <= 32 else -abs(spread-27)*15
-    base += 120 if last >= 30 else 0
-    dist_first = abs(first-avg_first)
-    base += 180-(dist_first*10) if dist_first<=6 else 0
-    odd = sum(n%2 for n in nums)
-    base += 140 if odd in [2,3] else -60
-    s = sum(nums)
-    base += 200 if 90<=s<=120 else -abs(s-105)*2
-    tails = [n%10 for n in nums]
-    base += 80 if len(set(tails))<=4 else 0
-    missing_hits = len(set(nums).intersection(patterns['missing']))
-    if 1<=missing_hits<=2: base += 120
-    danger_hits = len(set(nums).intersection(patterns['danger']))
-    base -= danger_hits*300
-    for t in tails:
-        base += tail_probs.get(t,0)*5
-    entropy = random.uniform(0,15)
-    return base + entropy
+        # --- 2. 首碼平衡 (範圍：01-10 均有機會) ---
+        if 1 <= first <= 5:
+            base += 200 # 小號補償
+        elif 6 <= first <= 10:
+            base += 200 # 中小號加權
+        elif first > 15:
+            base -= 400 # 首碼太大則重罰
 
-# ==========================================
-# 馬可夫尾數矩陣
-# ==========================================
+        # --- 3. 尾碼與跨度平衡 (跨度優於絕對數值) ---
+        # 不再硬性要求 31 以上，只要跨度 (最後碼-第一碼) 在 20-33 之間就給分
+        spread = last - first
+        if 20 <= spread <= 33:
+            base += 300 
+        else:
+            base -= abs(spread - 26) * 20
 
-def compute_tail_probs(history):
-    tail_counts = [Counter() for _ in range(10)]
-    for draw in history:
-        tails = [n%10 for n in draw]
-        for t in tails:
-            tail_counts[t][t]+=1
-    probs = {i:sum(tail_counts[i].values()) for i in range(10)}
-    total = sum(probs.values())
-    return {i:0 if total==0 else probs[i]/total for i in range(10)}
+        # --- 4. 尾碼合理區間 (25-39 均可) ---
+        if 25 <= last <= 39:
+            base += 150
+        else:
+            base -= 500 # 尾碼太小 (低於25) 或太誇張才扣分
 
-# ==========================================
-# 分區抽樣 + 熱號強化
-# ==========================================
+        # --- 5. 結構特徵 (同尾 & 避險) ---
+        tails = [n % 10 for n in nums]
+        if len(set(tails)) <= 4: 
+            base += 100 # 鼓勵出現同尾數組合
+        
+        danger_hits = len(set(nums).intersection(patterns['danger_numbers']))
+        base -= (danger_hits * 500)
 
-def structured_random(hot_pool):
-    nums = [
-        random.choice(range(1,10)),
-        random.choice(range(10,20)),
-        random.choice(range(20,30)),
-        random.choice(range(30,40)),
-        random.choice(hot_pool) if hot_pool else random.randint(1,39)
-    ]
-    return sorted(list(set(nums))) if len(set(nums))==5 else structured_random(hot_pool)
+        # 隨機熵值，確保每次結果都不同
+        entropy = random.uniform(0, 100) 
+        scores.append(round(base + entropy, 2))
+    return scores
 
 # ==========================================
-# Streamlit UI
+# UI 介面
 # ==========================================
 
-st.set_page_config(page_title="Gauss Master V19+", page_icon="🚀", layout="wide")
-st.title("🚀 Gauss Master V19+ 進階版")
+st.set_page_config(page_title="Gauss Master V17.3", page_icon="🎯", layout="wide")
+st.title("🎯 Gauss Master Pro V17.3 終極平衡版")
 
-uploaded_file = st.file_uploader("上傳539歷史Excel", type=["xlsx"])
-
-TOP50_FILE = "v19_top50.csv"
+uploaded_file = st.file_uploader("請上傳歷史 Excel (xlsx)", type=["xlsx"])
 
 if uploaded_file:
     try:
         df = pd.read_excel(uploaded_file, header=None)
         history = []
         for _, row in df.iterrows():
-            nums = [int(n) for n in re.findall(r'\d+', str(row.values)) if 1<=int(n)<=39]
-            if len(nums)>=5:
-                history.append(sorted(nums[:5]))
-        
-        if history:
-            recent_context = history[:15]
-            avg_first = np.mean([draw[0] for draw in recent_context])
-            recent_all = [n for sub in history[:10] for n in sub]
-            missing = [n for n in range(1,40) if n not in recent_all]
-            danger = set(history[0]).intersection(set(history[1])) if len(history)>=2 else set()
-            patterns = {"missing":missing, "danger":danger}
-            tail_probs = compute_tail_probs(history)
-            st.markdown(f"### 最新期：{', '.join([f'{x:02d}' for x in history[0]])}")
-            
-            if st.button("🚀 開始200k模擬"):
-                progress = st.progress(0)
-                candidates = []
-                hot_pool = [n for n,_ in Counter(recent_all).most_common(20)]
-                total = 200000
-                for i in range(total):
-                    nums = structured_random(hot_pool)
-                    score = score_combo(nums, patterns, avg_first, tail_probs)
-                    if score>500:
-                        candidates.append((nums,score))
-                    if i%5000==0:
-                        progress.progress(i/total)
-                progress.progress(1.0)
-                
-                if candidates:
-                    candidates.sort(key=lambda x:x[1], reverse=True)
-                    top10 = candidates[:10]
-                    top5_next = top10[:5]  # 下一期建議
-                    
-                    # 顯示 Top10
-                    res = []
-                    for i,(c,s) in enumerate(top10):
-                        res.append({
-                            "排名":f"Top{i+1}",
-                            "號碼":", ".join([f"{x:02d}" for x in c]),
-                            "和值":sum(c),
-                            "跨度":c[-1]-c[0],
-                            "AC":calculate_ac(c),
-                            "評分":round(s,2)
-                        })
-                    st.subheader("📊 模擬結果 Top 10")
-                    st.table(pd.DataFrame(res))
-                    
-                    # 顯示下一期 Top5
-                    st.subheader("👑 建議下一期 Top5 組合")
-                    next5 = []
-                    for i,(c,s) in enumerate(top5_next):
-                        next5.append({"排名":f"Top{i+1}", "號碼":", ".join([f"{x:02d}" for x in c])})
-                    st.table(pd.DataFrame(next5))
-                    
-                    # 熱號池
-                    hot_nums = [n for combo,_ in candidates[:1000] for n in combo]
-                    pool = [n for n,_ in Counter(hot_nums).most_common(20)]
-                    st.markdown(f"🔥 強勢號碼池：{', '.join(map(str,pool))}")
-                    st.balloons()
-                    
-                    # 儲存 Top50
-                    top50 = candidates[:50]
-                    top50_df = pd.DataFrame([{"號碼":", ".join([f"{x:02d}" for x in c]), "評分":s} for c,s in top50])
-                    top50_df.to_csv(TOP50_FILE, index=False)
-                    st.success(f"💾 已保存 Top50 組合到 {TOP50_FILE}")
+            clean_nums = [int(n) for n in re.findall(r'\d+', str(row.values)) if 1 <= int(n) <= 39]
+            if len(clean_nums) >= 5: history.append(sorted(clean_nums[:5]))
 
-            # 顯示上一次 Top50
-            if os.path.exists(TOP50_FILE):
-                st.subheader("📁 上一次 Top50 組合")
-                last_top50 = pd.read_csv(TOP50_FILE)
-                st.table(last_top50)
+        if history:
+            # 避險號碼 (最近兩期重複出現的)
+            danger = set(history[0]).intersection(set(history[1])) if len(history)>=2 else set()
+            patterns = {"danger_numbers": danger}
+            
+            st.success(f"✅ 資料載入成功。最新開獎：{', '.join([f'{x:02d}' for x in history[0]])}")
+            
+            if st.button("🚀 啟動 V17.3 全域平衡模擬"):
+                progress_bar = st.progress(0)
+                hot_pool = []
                 
-    except Exception as e:
-        st.error(e)
+                # 第一階段：57 萬次大規模海選
+                for i in range(38):
+                    raw = [random.sample(range(1, 40), 5) for _ in range(15000)]
+                    metrics = [{"nums": sorted(r), "ac": len(set(abs(a-b) for a,b in itertools.combinations(sorted(r), 2))) - 4} for r in raw]
+                    scores = get_god_score_batch(metrics, patterns)
+                    for m, s in zip(metrics, scores):
+                        if s > 350: 
+                            hot_pool.extend(m['nums'])
+                    progress_bar.progress((i+1)/50)
+
+                # 第二階段：核心池二次精準配對
+                if hot_pool:
+                    # 統計出最強勢的 22 顆號碼
+                    top_n_nums = [n for n, c in Counter(hot_pool).most_common(22)]
+                    refined_raw = [random.sample(top_n_nums, 5) for _ in range(50000)]
+                    refined_metrics = [{"nums": sorted(r), "ac": len(set(abs(a-b) for a,b in itertools.combinations(sorted(r), 2))) - 4} for r in refined_raw]
+                    
+                    refined_scores = get_god_score_batch(refined_metrics, patterns)
+                    final_candidates = [{"combo": m['nums'], "score": s} for m, s in zip(refined_metrics, refined_scores) if s > 500]
+                    
+                    progress_bar.progress(1.0)
+                    if final_candidates:
+                        random.shuffle(final_candidates)
+                        final_top = sorted(final_candidates, key=lambda x: x['score'], reverse=True)[:5]
+                        
+                        st.subheader("👑 本期精選 Top 5 (全域平衡)")
+                        res = []
+                        for idx, item in enumerate(final_top):
+                            c = item['combo']
+                            res.append({
+                                "排名": f"Top {idx+1}", 
+                                "推薦號碼": ", ".join([f"{x:02d}" for x in c]), 
+                                "首碼": f"{c[0]:02d}",
+                                "尾碼": f"{c[-1]:02d}",
+                                "跨度": c[-1] - c[0],
+                                "總和": sum(c)
+                            })
+                        st.table(pd.DataFrame(res))
+                        
+                        st.markdown(f"📊 **動態強勢號碼池 (含小、中、大號)**：\n`{', '.join([f'{x:02d}' for x in sorted(top_n_nums)])}`")
+                        st.balloons()
+                    else:
+                        st.warning("⚠️ 模擬未命中理想組合，請點擊重試。")
+    except Exception as e: st.error(f"錯誤: {e}")
