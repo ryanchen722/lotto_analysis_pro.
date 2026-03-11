@@ -9,9 +9,9 @@ from bs4 import BeautifulSoup
 from collections import Counter
 
 
-# =====================================
-# 抓取539資料（雲端優化）
-# =====================================
+# ==========================
+# 抓539歷史資料
+# ==========================
 
 @st.cache_data(ttl=3600)
 def fetch_539_history():
@@ -46,62 +46,35 @@ def fetch_539_history():
     return history
 
 
-# =====================================
+# ==========================
 # AC值
-# =====================================
+# ==========================
 
 def calculate_ac(nums):
 
     return len(set(abs(a-b) for a,b in itertools.combinations(nums,2))) - 4
 
 
-# =====================================
-# 結構評分
-# =====================================
+# ==========================
+# 共現矩陣
+# ==========================
 
-def structure_score(nums,history):
+def pair_matrix(history):
 
-    nums = sorted(nums)
+    pair_count = Counter()
 
-    score = 0
+    for draw in history:
 
-    ac = calculate_ac(nums)
+        for pair in itertools.combinations(draw,2):
 
-    if 4 <= ac <= 8:
-        score += 120
+            pair_count[tuple(sorted(pair))] += 1
 
-    span = nums[-1] - nums[0]
-
-    if 22 <= span <= 32:
-        score += 150
-
-    odd = sum(n % 2 for n in nums)
-
-    if odd in [2,3]:
-        score += 80
-
-    consecutive = sum(1 for i in range(4) if nums[i+1] - nums[i] == 1)
-
-    if consecutive == 1:
-        score += 50
-
-    tails = [n % 10 for n in nums]
-
-    if len(set(tails)) <= 4:
-        score += 40
-
-    recent = [n for sub in history[:10] for n in sub]
-
-    cold = [n for n in nums if n not in recent]
-
-    score += len(cold) * 20
-
-    return score
+    return pair_count
 
 
-# =====================================
+# ==========================
 # Monte Carlo
-# =====================================
+# ==========================
 
 def monte_carlo_pool(history, simulations=200000):
 
@@ -116,37 +89,59 @@ def monte_carlo_pool(history, simulations=200000):
         if tuple(nums) in history_set:
             continue
 
-        score = structure_score(nums,history)
+        ac = calculate_ac(nums)
 
-        if score > 200:
+        if 4 <= ac <= 8:
 
-            pool.extend(nums)
+            span = nums[-1] - nums[0]
+
+            if 20 <= span <= 32:
+
+                pool.extend(nums)
 
     counter = Counter(pool)
 
-    strong_numbers = [n for n,_ in counter.most_common(15)]
+    strong = [n for n,_ in counter.most_common(15)]
 
-    return strong_numbers
+    return strong
 
 
-# =====================================
+# ==========================
 # 找三碼核心
-# =====================================
+# ==========================
 
-def find_core_three(numbers):
+def find_core_three(pool, pair_count):
 
-    combos = list(itertools.combinations(numbers,3))
+    combos = list(itertools.combinations(pool,3))
 
-    return random.choice(combos)
+    best_combo = None
+    best_score = -1
+
+    for combo in combos:
+
+        score = 0
+
+        pairs = list(itertools.combinations(combo,2))
+
+        for p in pairs:
+
+            score += pair_count.get(tuple(sorted(p)),0)
+
+        if score > best_score:
+
+            best_score = score
+            best_combo = combo
+
+    return best_combo
 
 
-# =====================================
+# ==========================
 # 五組覆蓋
-# =====================================
+# ==========================
 
-def generate_five_sets(core,pool):
+def generate_sets(core,pool):
 
-    final = []
+    results = []
 
     remaining = [n for n in pool if n not in core]
 
@@ -156,20 +151,60 @@ def generate_five_sets(core,pool):
 
         combo = sorted(list(core)+extra)
 
-        final.append(combo)
+        results.append(combo)
 
-    return final
+    return results
 
 
-# =====================================
+# ==========================
+# 回測
+# ==========================
+
+def backtest(history):
+
+    hit2 = 0
+    hit3 = 0
+
+    for i in range(50,len(history)-1):
+
+        train = history[i:]
+
+        target = history[i-1]
+
+        pair_count = pair_matrix(train)
+
+        pool = monte_carlo_pool(train,50000)
+
+        core = find_core_three(pool,pair_count)
+
+        sets = generate_sets(core,pool)
+
+        for s in sets:
+
+            match = len(set(s) & set(target))
+
+            if match >= 3:
+
+                hit3 += 1
+
+                break
+
+            elif match == 2:
+
+                hit2 += 1
+
+    return hit2,hit3
+
+
+# ==========================
 # Streamlit UI
-# =====================================
+# ==========================
 
-st.set_page_config(page_title="Gauss 539 Cloud",page_icon="🎯")
+st.set_page_config(page_title="Gauss 539 V27",page_icon="🎯")
 
-st.title("🎯 Gauss 539 V26 Cloud")
+st.title("🎯 Gauss 539 V27 Stable")
 
-if st.button("抓取最新資料並分析"):
+if st.button("抓取資料並分析"):
 
     history = fetch_539_history()
 
@@ -177,13 +212,17 @@ if st.button("抓取最新資料並分析"):
 
     st.write("最新一期：",history[0])
 
-    st.write("Monte Carlo 模擬中...")
+    st.write("建立共現矩陣...")
+
+    pair_count = pair_matrix(history)
+
+    st.write("Monte Carlo 模擬...")
 
     pool = monte_carlo_pool(history)
 
-    core = find_core_three(pool)
+    core = find_core_three(pool,pair_count)
 
-    results = generate_five_sets(core,pool)
+    results = generate_sets(core,pool)
 
     st.subheader("三碼核心")
 
@@ -191,19 +230,19 @@ if st.button("抓取最新資料並分析"):
 
     res = []
 
-    for idx,nums in enumerate(results):
+    for i,r in enumerate(results):
 
         res.append({
 
-            "排名":f"Top {idx+1}",
+            "排名":f"Top {i+1}",
 
-            "推薦組合":", ".join([f"{x:02d}" for x in nums]),
+            "號碼":", ".join([f"{x:02d}" for x in r]),
 
-            "和值":sum(nums),
+            "和值":sum(r),
 
-            "跨度":nums[-1]-nums[0],
+            "跨度":r[-1]-r[0],
 
-            "AC":calculate_ac(nums)
+            "AC":calculate_ac(r)
 
         })
 
@@ -214,5 +253,13 @@ if st.button("抓取最新資料並分析"):
     st.subheader("強勢號碼池")
 
     st.write(pool)
+
+    st.subheader("歷史回測")
+
+    hit2,hit3 = backtest(history)
+
+    st.write(f"中2次數：{hit2}")
+
+    st.write(f"中3次數：{hit3}")
 
     st.balloons()
