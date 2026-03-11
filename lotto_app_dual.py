@@ -54,13 +54,21 @@ def structure_score(nums, history):
     return score
 
 # ==========================================
-# Monte Carlo + 五組號碼覆蓋
+# Monte Carlo + 五組號碼覆蓋 + 排除歷史頭獎
 # ==========================================
 def monte_carlo_5_sets(history, simulations=200000):
     candidates = []
 
+    # 建立歷史頭獎集合，方便比對
+    history_set = set(tuple(sorted(sub)) for sub in history)
+
     for _ in range(simulations):
         nums = sorted(random.sample(range(1,40),5))
+
+        # 排除與歷史頭獎重複
+        if tuple(nums) in history_set:
+            continue
+
         score = structure_score(nums, history)
         if score > 200:
             candidates.append((nums,score))
@@ -89,7 +97,7 @@ def monte_carlo_5_sets(history, simulations=200000):
 # Streamlit UI
 # ==========================================
 st.set_page_config(page_title="Gauss Master V24", page_icon="🚀", layout="wide")
-st.title("🚀 Gauss Master 539 V24 – 五組號碼覆蓋版")
+st.title("🚀 Gauss Master 539 V24 – 五組號碼覆蓋版 (不重複歷史頭獎)")
 
 uploaded_file = st.file_uploader("上傳 539 歷史 Excel", type=["xlsx"])
 
