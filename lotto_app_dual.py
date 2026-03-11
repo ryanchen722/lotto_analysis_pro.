@@ -8,18 +8,24 @@ import re
 from bs4 import BeautifulSoup
 from collections import Counter
 
+
 # =====================================
-# 抓取539歷史資料
+# 抓取539資料（雲端優化）
 # =====================================
 
+@st.cache_data(ttl=3600)
 def fetch_539_history():
 
-    url = "https://www.pilio.idv.tw/lto539/list.asp"
+    url = "https://www.pilio.idv.tw/lto539/drawlist/drawlist.asp"
 
-    r = requests.get(url)
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    r = requests.get(url, headers=headers)
     r.encoding = "utf-8"
 
-    soup = BeautifulSoup(r.text,"html.parser")
+    soup = BeautifulSoup(r.text, "lxml")
 
     rows = soup.find_all("tr")
 
@@ -27,11 +33,11 @@ def fetch_539_history():
 
     for row in rows:
 
-        nums = re.findall(r'\d{1,2}',row.text)
+        nums = re.findall(r'\d{1,2}', row.text)
 
         if len(nums) >= 5:
 
-            numbers = list(map(int,nums[-5:]))
+            numbers = list(map(int, nums[-5:]))
 
             if all(1 <= n <= 39 for n in numbers):
 
@@ -94,10 +100,10 @@ def structure_score(nums,history):
 
 
 # =====================================
-# Monte Carlo 找強勢號碼
+# Monte Carlo
 # =====================================
 
-def monte_carlo_pool(history,simulations=200000):
+def monte_carlo_pool(history, simulations=200000):
 
     pool = []
 
@@ -135,7 +141,7 @@ def find_core_three(numbers):
 
 
 # =====================================
-# 生成五組覆蓋
+# 五組覆蓋
 # =====================================
 
 def generate_five_sets(core,pool):
@@ -159,19 +165,17 @@ def generate_five_sets(core,pool):
 # Streamlit UI
 # =====================================
 
-st.set_page_config(page_title="Gauss Master V26",page_icon="🚀",layout="wide")
+st.set_page_config(page_title="Gauss 539 Cloud",page_icon="🎯")
 
-st.title("🚀 Gauss Master 539 V26 全自動版")
+st.title("🎯 Gauss 539 V26 Cloud")
 
-if st.button("📡 抓取最新開獎資料"):
+if st.button("抓取最新資料並分析"):
 
     history = fetch_539_history()
 
-    st.success(f"成功抓取 {len(history)} 期資料")
+    st.success(f"抓到 {len(history)} 期資料")
 
     st.write("最新一期：",history[0])
-
-    st.divider()
 
     st.write("Monte Carlo 模擬中...")
 
@@ -181,7 +185,7 @@ if st.button("📡 抓取最新開獎資料"):
 
     results = generate_five_sets(core,pool)
 
-    st.subheader("🎯 三碼核心")
+    st.subheader("三碼核心")
 
     st.write(core)
 
@@ -203,11 +207,11 @@ if st.button("📡 抓取最新開獎資料"):
 
         })
 
-    st.subheader("👑 五組覆蓋推薦")
+    st.subheader("五組推薦")
 
     st.table(pd.DataFrame(res))
 
-    st.markdown("📊 強勢號碼池")
+    st.subheader("強勢號碼池")
 
     st.write(pool)
 
