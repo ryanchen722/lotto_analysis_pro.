@@ -10,39 +10,37 @@ from collections import Counter
 
 
 # ==========================
-# 抓539歷史資料 (分頁版)
+# 抓539資料
 # ==========================
 
 @st.cache_data(ttl=3600)
 def fetch_539_history():
 
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers={"User-Agent":"Mozilla/5.0"}
 
-    history = []
+    history=[]
 
     for page in range(1,150):
 
-        url = f"https://www.pilio.idv.tw/lto539/drawlist/drawlist.asp?page={page}"
+        url=f"https://www.pilio.idv.tw/lto539/drawlist/drawlist.asp?page={page}"
 
         try:
 
-            r = requests.get(url, headers=headers, timeout=10)
+            r=requests.get(url,headers=headers,timeout=10)
 
-            soup = BeautifulSoup(r.text, "lxml")
+            soup=BeautifulSoup(r.text,"lxml")
 
-            rows = soup.find_all("tr")
+            rows=soup.find_all("tr")
 
             for row in rows:
 
-                nums = re.findall(r'\d{1,2}', row.text)
+                nums=re.findall(r'\d{1,2}',row.text)
 
-                if len(nums) >= 5:
+                if len(nums)>=5:
 
-                    numbers = list(map(int, nums[-5:]))
+                    numbers=list(map(int,nums[-5:]))
 
-                    if all(1 <= n <= 39 for n in numbers):
+                    if all(1<=n<=39 for n in numbers):
 
                         history.append(sorted(numbers))
 
@@ -58,7 +56,7 @@ def fetch_539_history():
 
 def calculate_ac(nums):
 
-    return len(set(abs(a-b) for a,b in itertools.combinations(nums,2))) - 4
+    return len(set(abs(a-b) for a,b in itertools.combinations(nums,2)))-4
 
 
 # ==========================
@@ -67,15 +65,47 @@ def calculate_ac(nums):
 
 def pair_matrix(history):
 
-    pair_count = Counter()
+    pair_count=Counter()
 
     for draw in history:
 
         for pair in itertools.combinations(draw,2):
 
-            pair_count[tuple(sorted(pair))] += 1
+            pair_count[tuple(sorted(pair))]+=1
 
     return pair_count
+
+
+# ==========================
+# 尾數分析
+# ==========================
+
+def tail_analysis(history):
+
+    tails=[]
+
+    for draw in history:
+
+        for n in draw:
+
+            tails.append(n%10)
+
+    return Counter(tails)
+
+
+# ==========================
+# 號碼熱度
+# ==========================
+
+def number_heat(history):
+
+    nums=[]
+
+    for draw in history:
+
+        nums.extend(draw)
+
+    return Counter(nums)
 
 
 # ==========================
@@ -84,59 +114,65 @@ def pair_matrix(history):
 
 def monte_carlo_pool(history, simulations=200000):
 
-    pool = []
+    pool=[]
 
-    history_set = set(tuple(sorted(x)) for x in history)
+    history_set=set(tuple(sorted(x)) for x in history)
 
     for _ in range(simulations):
 
-        nums = sorted(random.sample(range(1,40),5))
+        nums=sorted(random.sample(range(1,40),5))
 
         if tuple(nums) in history_set:
             continue
 
-        ac = calculate_ac(nums)
+        ac=calculate_ac(nums)
 
-        if 4 <= ac <= 8:
+        if 4<=ac<=8:
 
-            span = nums[-1] - nums[0]
+            span=nums[-1]-nums[0]
 
-            if 20 <= span <= 32:
+            if 20<=span<=32:
 
                 pool.extend(nums)
 
-    counter = Counter(pool)
+    counter=Counter(pool)
 
-    strong = [n for n,_ in counter.most_common(15)]
+    strong=[n for n,_ in counter.most_common(15)]
 
     return strong
 
 
 # ==========================
-# 找三碼核心
+# AI核心
 # ==========================
 
-def find_core_three(pool, pair_count):
+def find_core_three(pool,pair_count,heat,tail):
 
-    combos = list(itertools.combinations(pool,3))
+    combos=list(itertools.combinations(pool,3))
 
-    best_combo = None
-    best_score = -1
+    best=None
+    best_score=-1
 
     for combo in combos:
 
-        score = 0
+        score=0
 
-        for pair in itertools.combinations(combo,2):
+        for p in itertools.combinations(combo,2):
 
-            score += pair_count.get(tuple(sorted(pair)),0)
+            score+=pair_count.get(tuple(sorted(p)),0)
 
-        if score > best_score:
+        for n in combo:
 
-            best_score = score
-            best_combo = combo
+            score+=heat.get(n,0)
 
-    return best_combo
+            score+=tail.get(n%10,0)
+
+        if score>best_score:
+
+            best_score=score
+            best=combo
+
+    return best
 
 
 # ==========================
@@ -145,15 +181,15 @@ def find_core_three(pool, pair_count):
 
 def generate_sets(core,pool):
 
-    results = []
+    results=[]
 
-    remaining = [n for n in pool if n not in core]
+    remain=[n for n in pool if n not in core]
 
     for _ in range(5):
 
-        extra = random.sample(remaining,2)
+        extra=random.sample(remain,2)
 
-        combo = sorted(list(core)+extra)
+        combo=sorted(list(core)+extra)
 
         results.append(combo)
 
@@ -164,17 +200,17 @@ def generate_sets(core,pool):
 # Streamlit UI
 # ==========================
 
-st.set_page_config(page_title="Gauss 539 V27.6",page_icon="🎯")
+st.set_page_config(page_title="Gauss 539 V28",page_icon="🎯")
 
-st.title("🎯 Gauss 539 V27.6 分頁資料版")
+st.title("🎯 Gauss 539 V28 AI版")
 
-if st.button("抓取資料並分析"):
+if st.button("開始分析"):
 
-    history = fetch_539_history()
+    history=fetch_539_history()
 
-    if len(history) == 0:
+    if len(history)==0:
 
-        st.error("沒有抓到資料，請稍後再試")
+        st.error("沒有抓到資料")
 
         st.stop()
 
@@ -182,23 +218,23 @@ if st.button("抓取資料並分析"):
 
     st.write("最新一期：",history[0])
 
-    st.write("建立共現矩陣...")
+    pair_count=pair_matrix(history)
 
-    pair_count = pair_matrix(history)
+    tail=tail_analysis(history)
 
-    st.write("Monte Carlo 模擬...")
+    heat=number_heat(history)
 
-    pool = monte_carlo_pool(history)
+    pool=monte_carlo_pool(history)
 
-    core = find_core_three(pool,pair_count)
+    core=find_core_three(pool,pair_count,heat,tail)
 
-    results = generate_sets(core,pool)
+    results=generate_sets(core,pool)
 
     st.subheader("三碼核心")
 
     st.write(core)
 
-    res = []
+    res=[]
 
     for i,r in enumerate(results):
 
@@ -223,5 +259,13 @@ if st.button("抓取資料並分析"):
     st.subheader("強勢號碼池")
 
     st.write(pool)
+
+    st.subheader("號碼熱度")
+
+    st.write(dict(heat))
+
+    st.subheader("尾數分布")
+
+    st.write(dict(tail))
 
     st.balloons()
