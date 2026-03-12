@@ -10,154 +10,150 @@ from collections import Counter, defaultdict
 import plotly.graph_objects as go
 
 # ==========================
-# 1. 數據抓取 (擴大至 3000 期)
+# 1. 數據抓取 (精準 td 欄位版)
 # ==========================
 @st.cache_data(ttl=3600)
-def fetch_539_history():
+def fetch_539_history(max_pages=150):
     headers = {"User-Agent": "Mozilla/5.0"}
     history = []
-    session = requests.Session() # 使用 Session 加速抓取
+    session = requests.Session()
     
-    # 抓取 150 頁，約可獲得 3000 期資料
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    for page in range(1, 151):
-        if page % 10 == 0:
-            progress_bar.progress(page / 150)
-            status_text.text(f"正在抓取第 {page}/150 頁資料...")
-            
+    for page in range(1, max_pages + 1):
         url = f"https://www.pilio.idv.tw/lto539/drawlist/drawlist.asp?page={page}"
         try:
-            r = session.get(url, headers=headers, timeout=10)
+            r = session.get(url, headers=headers, timeout=15)
             r.encoding = 'big5'
             soup = BeautifulSoup(r.text, "lxml")
             rows = soup.find_all("tr")
             for row in rows:
-                nums = re.findall(r'\d{1,2}', row.text)
-                if len(nums) >= 5:
-                    draw = [int(n) for n in nums[-5:]]
-                    if all(1 <= n <= 39 for n in draw):
-                        sorted_draw = sorted(draw)
-                        if sorted_draw not in history:
-                            history.append(sorted_draw)
+                cells = row.find_all("td")
+                row_nums = []
+                for cell in cells:
+                    val = cell.get_text(strip=True)
+                    if val.isdigit():
+                        num = int(val)
+                        if 1 <= num <= 39:
+                            row_nums.append(num)
+                # 539 每一期開獎號碼固定為 5 碼
+                if len(row_nums) == 5:
+                    sorted_draw = sorted(row_nums)
+                    if sorted_draw not in history:
+                        history.append(sorted_draw)
+            
+            if page % 5 == 0:
+                progress_bar.progress(page / max_pages)
+                status_text.text(f"已同步三千期大數據：{page}/{max_pages} 頁...")
         except:
             break
             
     progress_bar.empty()
     status_text.empty()
-    return history[::-1] # 由舊到新
+    # 注意：歷史紀錄從舊到新排列
+    return history[::-1]
 
 # ==========================
-# 2. HMM 核心與雷達圖 (維持 V31 穩定版)
+# 2. HMM 預測邏輯
 # ==========================
-def calculate_ac(nums):
-    return len(set(abs(a-b) for a, b in itertools.combinations(nums, 2))) - 4
-
 def hmm_prediction(history_data, num_to_return=15):
     all_nums = [n for draw in history_data for n in draw]
     global_heat = Counter(all_nums)
-    avg_freq = len(all_nums) / 39
+    avg_f = len(all_nums) / 39
     
-    def get_state(num):
-        count = global_heat.get(num, 0)
-        if count < avg_freq * 0.8: return 0
-        if count > avg_freq * 1.2: return 2
-        return 1
+    def get_state(n):
+        c = global_heat.get(n, 0)
+        return 0 if c < avg_f * 0.8 else (2 if c > avg_f * 1.2 else 1)
 
+    state_seq = [tuple(sorted([get_state(n) for n in d])) for d in history_data]
     transitions = defaultdict(lambda: defaultdict(int))
-    state_to_nums = defaultdict(list)
-    
-    last_states = None
-    for draw in history_data:
-        current_states = tuple(sorted([get_state(n) for n in draw]))
-        for n in draw:
-            state_to_nums[get_state(n)].append(n)
-        if last_states:
-            transitions[last_states][current_states] += 1
-        last_states = current_states
+    for i in range(len(state_seq)-1):
+        transitions[state_seq[i]][state_seq[i+1]] += 1
 
-    latest_state = tuple(sorted([get_state(n) for n in history_data[-1]]))
-    candidates = transitions[latest_state]
-    predicted_states = max(candidates, key=candidates.get) if candidates else (2, 2, 1, 1, 0)
+    latest_s = state_seq[-1]
+    predicted_s = max(transitions[latest_s], key=transitions[latest_s].get) if transitions[latest_s] else (2, 2, 1, 1, 0)
+
+    state_map = defaultdict(list)
+    for n in range(1, 40): state_map[get_state(n)].append(n)
 
     pool = []
-    for s in predicted_states:
-        pool_in_state = state_to_nums[s]
-        if pool_in_state:
-            chosen = random.choice(Counter(pool_in_state).most_common(10))[0]
-            pool.append(chosen)
-    
-    pool = list(set(pool))
-    while len(pool) < num_to_return:
-        extra = random.randint(1, 39)
-        if extra not in pool: pool.append(extra)
-    return sorted(pool[:num_to_return])
+    for s in predicted_s:
+        if state_map[s]: pool.append(random.choice(state_map[s]))
+    while len(set(pool)) < num_to_return:
+        pool.append(random.randint(1, 39))
+    return sorted(list(set(pool))[:num_to_return])
 
-def draw_radar_chart(numbers):
-    big_count = len([n for n in numbers if n >= 20]) / 5
-    odd_count = len([n for n in numbers if n % 2 != 0]) / 5
-    s_val = (sum(numbers) - 15) / (185 - 15)
-    span = (numbers[-1] - numbers[0]) / 38
-    ac = calculate_ac(numbers) / 8
-    categories = ['大小比', '奇偶比', '和值感', '跨度感', '複雜度(AC)']
-    values = [big_count, odd_count, s_val, span, ac]
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=values, theta=categories, fill='toself', name='號碼體質'))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 1])), showlegend=False, height=300, margin=dict(l=30, r=30, t=20, b=20))
+def draw_radar(nums):
+    # 雷達圖各維度計算
+    metrics = [
+        len([n for n in nums if n >= 20]) / 5,  # 大小
+        len([n for n in nums if n % 2 != 0]) / 5, # 奇偶
+        (sum(nums)-15)/170, # 和值
+        (nums[-1]-nums[0])/38, # 跨度
+        (len(set(abs(a-b) for a,b in itertools.combinations(nums,2)))-4)/8 # AC
+    ]
+    fig = go.Figure(data=go.Scatterpolar(r=metrics, theta=['大小','奇偶','和值','跨度','AC值'], fill='toself'))
+    fig.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 1])), showlegend=False, height=250, margin=dict(l=20,r=20,t=20,b=20))
     return fig
 
 # ==========================
 # 3. Streamlit UI
 # ==========================
-st.set_page_config(page_title="Gauss 539 V32 BigData", layout="wide")
-st.title("🎯 Gauss 539 V32 - 3000期大數據 + HMM")
+st.set_page_config(page_title="Gauss 539 AI V33", layout="wide")
 
-if 'history_data' not in st.session_state:
-    with st.spinner("正在加載 3000 期歷史數據..."):
-        st.session_state.history_data = fetch_539_history()
+if 'history' not in st.session_state:
+    st.session_state.history = fetch_539_history(150)
 
-history = st.session_state.history_data
-st.success(f"目前資料庫共有 {len(history)} 期歷史開獎紀錄")
+history = st.session_state.history
+latest_draw = history[-1]
 
-tab1, tab2 = st.tabs(["🔮 HMM 預測與雷達分析", "🕵️ 歷史重複性驗證"])
+# --- 頂部顯示：最新一期 ---
+st.title("🎯 Gauss 539 V33 - HMM 預測系統")
+st.markdown("---")
+col_l, col_r = st.columns([1, 2])
+with col_l:
+    st.subheader("📢 最新一期開獎")
+    draw_str = " ".join([f"{x:02d}" for x in latest_draw])
+    st.markdown(f"## `{draw_str}`")
+with col_r:
+    st.subheader("📊 數據統計")
+    st.write(f"資料庫跨度：約 {len(history)} 期 (三千期大數據已掛載)")
+    st.write(f"最新開獎指標：和值 {sum(latest_draw)} | 跨度 {latest_draw[-1]-latest_draw[0]}")
+st.markdown("---")
+
+# --- 功能分區 ---
+tab1, tab2 = st.tabs(["🚀 AI 智慧預測", "🕵️ 歷史回測與紀錄"])
 
 with tab1:
-    if st.button("🚀 執行三千期大數據預測"):
-        hmm_pool = hmm_prediction(history)
-        
-        # 轉換為集合以便檢查重複
+    if st.button("✨ 執行 HMM 狀態轉移預測"):
+        pool = hmm_prediction(history)
         history_sets = [set(h) for h in history]
         
         recs = []
-        for _ in range(5000):
-            sample = sorted(random.sample(hmm_pool, 5))
-            if 4 <= calculate_ac(sample) <= 8:
-                if 20 <= (sample[-1] - sample[0]) <= 32:
-                    # 關鍵功能：排除與歷史完全一樣的組合
+        # 進行一萬次模擬過濾，確保不與歷史三千期重複
+        for _ in range(10000):
+            sample = sorted(random.sample(pool, 5))
+            if 4 <= (len(set(abs(a-b) for a,b in itertools.combinations(sample,2)))-4) <= 8:
+                if 20 <= (sample[-1]-sample[0]) <= 32:
                     if set(sample) not in history_sets:
-                        if sample not in recs: recs.append(sample)
+                        recs.append(sample)
             if len(recs) >= 3: break
 
-        st.subheader(f"💡 強勢號碼池: {', '.join([f'{x:02d}' for x in hmm_pool])}")
+        st.info(f"💡 HMM 強勢號碼池： {', '.join([f'{x:02d}' for x in pool])}")
         
         cols = st.columns(3)
-        for i, rec in enumerate(recs):
+        for i, r in enumerate(recs):
             with cols[i]:
-                st.markdown(f"### 推薦組合 {i+1}")
-                st.code("  ".join([f"{x:02d}" for x in rec]), language="")
-                st.plotly_chart(draw_radar_chart(rec), use_container_width=True)
-                st.success("✅ 通過歷史重複性校驗")
+                st.success(f"推薦組合 {i+1}")
+                st.markdown(f"### {' - '.join([f'{x:02d}' for x in r])}")
+                st.plotly_chart(draw_radar(r), use_container_width=True)
+                st.caption("✅ 已通過歷史 3000 期不重號校驗")
 
 with tab2:
-    st.subheader("🕵️ 推薦組合 vs 3000期歷史")
-    st.write("此功能會驗證目前的預測是否曾出現在三千期歷史中。")
-    st.info("根據統計，539 號碼組合重複出現的機率極低，排除重複號碼可提高科學性。")
-    
-    # 顯示最近五期數據作為參考
-    st.markdown("#### 最新 5 期歷史紀錄")
-    recent_df = pd.DataFrame(history[-5:][::-1], columns=['號1', '號2', '號3', '號4', '號5'])
-    st.table(recent_df)
+    st.subheader("🕵️ 歷史開獎紀錄 (最新 15 期)")
+    history_display = pd.DataFrame(history[-15:][::-1], columns=['一', '二', '三', '四', '五'])
+    st.dataframe(history_display, use_container_width=True)
 
 st.markdown("---")
-st.caption("V32 版：已優化三千期抓取效能，並加入歷史重複性自動過濾機制。")
+st.caption("本系統基於 HMM (隱藏馬可夫模型) 進行狀態遷移預測。所有結果均經過三千期歷史數據校驗排除重複組合。")
