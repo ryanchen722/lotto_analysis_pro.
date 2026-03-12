@@ -4,37 +4,50 @@ import streamlit as st
 import numpy as np
 import itertools
 import requests
+import re
+from bs4 import BeautifulSoup
 from collections import Counter
 
 
 # ==========================
-# 抓官方539資料
+# 抓539歷史資料 (分頁版)
 # ==========================
 
 @st.cache_data(ttl=3600)
 def fetch_539_history():
 
-    url = "https://api.taiwanlottery.com/TLCAPIWeB/Lottery/Lotto539Result"
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
 
     history = []
 
-    try:
+    for page in range(1,150):
 
-        r = requests.get(url, timeout=10)
+        url = f"https://www.pilio.idv.tw/lto539/drawlist/drawlist.asp?page={page}"
 
-        data = r.json()
+        try:
 
-        for item in data["content"]["lotto539Res"]:
+            r = requests.get(url, headers=headers, timeout=10)
 
-            nums = item["drawNumberAppear"]
+            soup = BeautifulSoup(r.text, "lxml")
 
-            numbers = [int(n) for n in nums]
+            rows = soup.find_all("tr")
 
-            history.append(sorted(numbers))
+            for row in rows:
 
-    except:
+                nums = re.findall(r'\d{1,2}', row.text)
 
-        st.error("官方資料抓取失敗")
+                if len(nums) >= 5:
+
+                    numbers = list(map(int, nums[-5:]))
+
+                    if all(1 <= n <= 39 for n in numbers):
+
+                        history.append(sorted(numbers))
+
+        except:
+            break
 
     return history
 
@@ -151,13 +164,19 @@ def generate_sets(core,pool):
 # Streamlit UI
 # ==========================
 
-st.set_page_config(page_title="Gauss 539 V27.5",page_icon="🎯")
+st.set_page_config(page_title="Gauss 539 V27.6",page_icon="🎯")
 
-st.title("🎯 Gauss 539 V27.5 官方資料版")
+st.title("🎯 Gauss 539 V27.6 分頁資料版")
 
-if st.button("開始分析"):
+if st.button("抓取資料並分析"):
 
     history = fetch_539_history()
+
+    if len(history) == 0:
+
+        st.error("沒有抓到資料，請稍後再試")
+
+        st.stop()
 
     st.success(f"抓到 {len(history)} 期資料")
 
