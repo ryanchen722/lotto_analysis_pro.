@@ -1,4 +1,3 @@
-import os
 import random
 import pandas as pd
 import streamlit as st
@@ -10,14 +9,15 @@ from bs4 import BeautifulSoup
 from collections import Counter, defaultdict
 import plotly.graph_objects as go
 
-CSV_FILE = "539_history.csv"
 
 # ==========================
-# 1. 爬蟲
+# 抓資料
 # ==========================
-def crawl_539():
+@st.cache_data(ttl=3600)
+def fetch_539_history():
 
-    headers = {"User-Agent":"Mozilla/5.0"}
+    headers={"User-Agent":"Mozilla/5.0"}
+
     history=[]
 
     for page in range(1,120):
@@ -27,6 +27,8 @@ def crawl_539():
         try:
 
             r=requests.get(url,headers=headers,timeout=10)
+
+            r.encoding="big5"
 
             soup=BeautifulSoup(r.text,"lxml")
 
@@ -50,52 +52,19 @@ def crawl_539():
                             history.append(draw)
 
         except:
+
             break
 
     return history[::-1]
 
 
 # ==========================
-# 2. CSV
-# ==========================
-def load_csv():
-
-    if os.path.exists(CSV_FILE):
-
-        df=pd.read_csv(CSV_FILE)
-
-        return df.values.tolist()
-
-    return []
-
-
-def save_csv(history):
-
-    df=pd.DataFrame(history,columns=["n1","n2","n3","n4","n5"])
-
-    df.to_csv(CSV_FILE,index=False)
-
-
-@st.cache_data(ttl=3600)
-def fetch_history():
-
-    history=load_csv()
-
-    if len(history)<100:
-
-        history=crawl_539()
-
-        save_csv(history)
-
-    return history
-
-
-# ==========================
-# 3. HMM
+# HMM
 # ==========================
 def hmm_analysis(history):
 
     if len(history)<10:
+
         return sorted(random.sample(range(1,40),15))
 
     all_nums=[n for d in history for n in d]
@@ -104,16 +73,21 @@ def hmm_analysis(history):
 
     avg=len(all_nums)/39
 
-    def get_state(n):
+    def state(n):
 
         if heat[n]<avg*0.8:
+
             return 0
+
         elif heat[n]>avg*1.2:
+
             return 2
+
         else:
+
             return 1
 
-    states=[tuple(sorted([get_state(n) for n in d])) for d in history]
+    states=[tuple(sorted([state(n) for n in d])) for d in history]
 
     trans=defaultdict(lambda: defaultdict(int))
 
@@ -128,13 +102,15 @@ def hmm_analysis(history):
     s_map=defaultdict(list)
 
     for n in range(1,40):
-        s_map[get_state(n)].append(n)
+
+        s_map[state(n)].append(n)
 
     pool=[]
 
     for s in next_state:
 
         if s_map[s]:
+
             pool.append(random.choice(s_map[s]))
 
     while len(set(pool))<15:
@@ -142,41 +118,80 @@ def hmm_analysis(history):
         n=random.randint(1,39)
 
         if n not in pool:
-            pool.append(n)
 
-    pool=[n for n in pool if 1<=n<=39]
+            pool.append(n)
 
     return sorted(list(set(pool))[:15])
 
 
 # ==========================
-# 4. 雷達圖
+# 雷達圖
 # ==========================
 def radar(nums):
 
     ac=len(set(abs(a-b) for a,b in itertools.combinations(nums,2)))-4
 
     metrics=[
+
         len([n for n in nums if n>=20])/5,
+
         len([n for n in nums if n%2!=0])/5,
+
         (sum(nums)-15)/170,
+
         (nums[-1]-nums[0])/38,
+
         ac/8
+
     ]
 
     fig=go.Figure(data=go.Scatterpolar(
+
         r=metrics,
+
         theta=['大','奇','和','跨','AC'],
+
         fill='toself'
+
     ))
 
     fig.update_layout(
+
         polar=dict(radialaxis=dict(visible=False,range=[0,1])),
+
         showlegend=False,
+
         height=250
+
     )
 
     return fig
+
+
+# ==========================
+# 回測
+# ==========================
+def backtest_pool(history,window=200):
+
+    results={0:0,1:0,2:0,3:0,4:0,5:0}
+
+    for i in range(len(history)-window,len(history)-1):
+
+        train=history[:i]
+
+        real=history[i]
+
+        pool=hmm_analysis(train)
+
+        hit=len(set(pool)&set(real))
+
+        results[hit]+=1
+
+    total=sum(results.values())
+
+    stats={k:round(v/total*100,2) for k,v in results.items()}
+
+    return stats
 
 
 # ==========================
@@ -186,15 +201,11 @@ st.set_page_config(page_title="Gauss 539",layout="wide")
 
 st.title("🎯 Gauss 539 預測系統")
 
-with st.spinner("載入歷史資料..."):
+with st.spinner("抓取歷史資料..."):
 
-    history=fetch_history()
+    history=fetch_539_history()
 
-if not history:
-
-    st.error("抓不到資料")
-
-    st.stop()
+st.write("資料期數:",len(history))
 
 
 # 最新五期
@@ -202,17 +213,11 @@ st.subheader("最新五期")
 
 cols=st.columns(5)
 
-last5=history[-5:][::-1]
-
-for i,d in enumerate(last5):
+for i,d in enumerate(history[-5:][::-1]):
 
     with cols[i]:
 
         st.metric("最新期" if i==0 else f"前{i}期"," ".join([f"{x:02d}" for x in d]))
-
-        ac=len(set(abs(a-b) for a,b in itertools.combinations(d,2)))-4
-
-        st.caption(f"和值:{sum(d)} AC:{ac}")
 
 
 st.divider()
@@ -224,8 +229,6 @@ if st.button("執行預測"):
     pool=hmm_analysis(history)
 
     st.info("強勢號碼池: "+", ".join([f"{x:02d}" for x in pool]))
-
-    history_sets=[set(h) for h in history]
 
     recs=[]
 
@@ -239,18 +242,13 @@ if st.button("執行預測"):
 
         if 4<=ac<=8 and 20<=span<=32:
 
-            if set(sample) not in history_sets:
+            if sample not in recs:
 
-                if sample not in recs:
-                    recs.append(sample)
+                recs.append(sample)
 
         if len(recs)>=3:
+
             break
-
-    if len(recs)==0:
-
-        for _ in range(3):
-            recs.append(sorted(random.sample(pool,5)))
 
     cols=st.columns(3)
 
@@ -268,20 +266,11 @@ if st.button("執行預測"):
 st.divider()
 
 
-# 歷史資料
-st.subheader("歷史資料")
+# 回測
+if st.button("回測模型(最近200期)"):
 
-df=pd.DataFrame(history[::-1],columns=["號1","號2","號3","號4","號5"])
+    stats=backtest_pool(history,200)
 
-st.dataframe(df,height=400,use_container_width=True)
+    st.write("強勢池命中率 %")
 
-
-# CSV下載
-csv=df.to_csv(index=False).encode("utf-8")
-
-st.download_button(
-    "下載 CSV",
-    csv,
-    "539_history.csv",
-    "text/csv"
-)
+    st.write(stats)
