@@ -13,36 +13,38 @@ import plotly.graph_objects as go
 CSV_FILE = "539_history.csv"
 
 # ==========================
-# 1. 爬蟲抓資料
+# 1. 爬蟲
 # ==========================
 def crawl_539():
 
-    headers = {"User-Agent": "Mozilla/5.0"}
-    history = []
+    headers = {"User-Agent":"Mozilla/5.0"}
+    history=[]
 
     for page in range(1,120):
 
-        url = f"https://www.pilio.idv.tw/lto539/list.asp?indexpage={page}"
+        url=f"https://www.pilio.idv.tw/lto539/list.asp?indexpage={page}"
 
         try:
 
-            r = requests.get(url, headers=headers, timeout=10)
+            r=requests.get(url,headers=headers,timeout=10)
 
-            soup = BeautifulSoup(r.text,"lxml")
+            soup=BeautifulSoup(r.text,"lxml")
 
-            rows = soup.find_all("tr")
+            rows=soup.find_all("tr")
 
             for row in rows:
 
-                nums = re.findall(r'\b\d{1,2}\b', row.text)
+                nums=re.findall(r'\b\d{1,2}\b',row.text)
 
-                if len(nums) >= 5:
+                if len(nums)>=5:
 
-                    numbers = list(map(int, nums[-5:]))
+                    numbers=list(map(int,nums[-5:]))
 
-                    if len(numbers)==5 and all(1 <= n <= 39 for n in numbers):
+                    numbers=[n for n in numbers if 1<=n<=39]
 
-                        draw = sorted(numbers)
+                    if len(numbers)==5:
+
+                        draw=sorted(numbers)
 
                         if draw not in history:
                             history.append(draw)
@@ -50,19 +52,17 @@ def crawl_539():
         except:
             break
 
-    history = history[::-1]
-
-    return history
+    return history[::-1]
 
 
 # ==========================
-# 2. CSV 快取
+# 2. CSV
 # ==========================
 def load_csv():
 
     if os.path.exists(CSV_FILE):
 
-        df = pd.read_csv(CSV_FILE)
+        df=pd.read_csv(CSV_FILE)
 
         return df.values.tolist()
 
@@ -71,19 +71,19 @@ def load_csv():
 
 def save_csv(history):
 
-    df = pd.DataFrame(history, columns=["n1","n2","n3","n4","n5"])
+    df=pd.DataFrame(history,columns=["n1","n2","n3","n4","n5"])
 
     df.to_csv(CSV_FILE,index=False)
 
 
 @st.cache_data(ttl=3600)
-def fetch_539_history():
+def fetch_history():
 
-    history = load_csv()
+    history=load_csv()
 
-    if len(history) < 100:
+    if len(history)<100:
 
-        history = crawl_539()
+        history=crawl_539()
 
         save_csv(history)
 
@@ -91,61 +91,60 @@ def fetch_539_history():
 
 
 # ==========================
-# 3. HMM 號碼池
+# 3. HMM
 # ==========================
-def hmm_analysis(history_data):
+def hmm_analysis(history):
 
-    if len(history_data) < 10:
+    if len(history)<10:
         return sorted(random.sample(range(1,40),15))
 
-    all_nums = [n for d in history_data for n in d]
+    all_nums=[n for d in history for n in d]
 
-    heat = Counter(all_nums)
+    heat=Counter(all_nums)
 
-    avg = len(all_nums) / 39
+    avg=len(all_nums)/39
 
     def get_state(n):
 
-        if heat[n] < avg*0.8:
+        if heat[n]<avg*0.8:
             return 0
-        elif heat[n] > avg*1.2:
+        elif heat[n]>avg*1.2:
             return 2
         else:
             return 1
 
-    states = [tuple(sorted([get_state(n) for n in d])) for d in history_data]
+    states=[tuple(sorted([get_state(n) for n in d])) for d in history]
 
-    trans = defaultdict(lambda: defaultdict(int))
+    trans=defaultdict(lambda: defaultdict(int))
 
     for i in range(len(states)-1):
 
-        trans[states[i]][states[i+1]] += 1
+        trans[states[i]][states[i+1]]+=1
 
-    curr = states[-1]
+    curr=states[-1]
 
-    if curr in trans:
-        next_state = max(trans[curr], key=trans[curr].get)
-    else:
-        next_state = (2,2,1,1,0)
+    next_state=max(trans[curr],key=trans[curr].get) if curr in trans else (2,2,1,1,0)
 
-    s_map = defaultdict(list)
+    s_map=defaultdict(list)
 
     for n in range(1,40):
         s_map[get_state(n)].append(n)
 
-    pool = []
+    pool=[]
 
     for s in next_state:
 
         if s_map[s]:
             pool.append(random.choice(s_map[s]))
 
-    while len(set(pool)) < 15:
+    while len(set(pool))<15:
 
-        n = random.randint(1,39)
+        n=random.randint(1,39)
 
         if n not in pool:
             pool.append(n)
+
+    pool=[n for n in pool if 1<=n<=39]
 
     return sorted(list(set(pool))[:15])
 
@@ -153,11 +152,11 @@ def hmm_analysis(history_data):
 # ==========================
 # 4. 雷達圖
 # ==========================
-def draw_radar(nums):
+def radar(nums):
 
-    ac = len(set(abs(a-b) for a,b in itertools.combinations(nums,2))) - 4
+    ac=len(set(abs(a-b) for a,b in itertools.combinations(nums,2)))-4
 
-    metrics = [
+    metrics=[
         len([n for n in nums if n>=20])/5,
         len([n for n in nums if n%2!=0])/5,
         (sum(nums)-15)/170,
@@ -165,7 +164,7 @@ def draw_radar(nums):
         ac/8
     ]
 
-    fig = go.Figure(data=go.Scatterpolar(
+    fig=go.Figure(data=go.Scatterpolar(
         r=metrics,
         theta=['大','奇','和','跨','AC'],
         fill='toself'
@@ -174,20 +173,22 @@ def draw_radar(nums):
     fig.update_layout(
         polar=dict(radialaxis=dict(visible=False,range=[0,1])),
         showlegend=False,
-        height=220
+        height=250
     )
 
     return fig
 
 
 # ==========================
-# 5. Streamlit UI
+# UI
 # ==========================
-st.set_page_config(page_title="Gauss 539", layout="wide")
+st.set_page_config(page_title="Gauss 539",layout="wide")
+
+st.title("🎯 Gauss 539 預測系統")
 
 with st.spinner("載入歷史資料..."):
 
-    history = fetch_539_history()
+    history=fetch_history()
 
 if not history:
 
@@ -195,27 +196,24 @@ if not history:
 
     st.stop()
 
-st.title("🎯 Gauss 539 HMM 預測系統")
 
-# 最新5期
+# 最新五期
 st.subheader("最新五期")
 
-cols = st.columns(5)
+cols=st.columns(5)
 
-last5 = history[-5:][::-1]
+last5=history[-5:][::-1]
 
 for i,d in enumerate(last5):
 
     with cols[i]:
 
-        st.metric(
-            "最新期" if i==0 else f"前{i}期",
-            "-".join([f"{x:02d}" for x in d])
-        )
+        st.metric("最新期" if i==0 else f"前{i}期"," ".join([f"{x:02d}" for x in d]))
 
-        ac = len(set(abs(a-b) for a,b in itertools.combinations(d,2))) - 4
+        ac=len(set(abs(a-b) for a,b in itertools.combinations(d,2)))-4
 
         st.caption(f"和值:{sum(d)} AC:{ac}")
+
 
 st.divider()
 
@@ -223,49 +221,67 @@ st.divider()
 # 預測
 if st.button("執行預測"):
 
-    pool = hmm_analysis(history)
+    pool=hmm_analysis(history)
 
-    st.info("強勢號碼池：" + ", ".join([f"{x:02d}" for x in pool]))
+    st.info("強勢號碼池: "+", ".join([f"{x:02d}" for x in pool]))
 
-    history_sets = [set(h) for h in history]
+    history_sets=[set(h) for h in history]
 
-    recs = []
+    recs=[]
 
-    for _ in range(10000):
+    for _ in range(20000):
 
-        sample = sorted(random.sample(pool,5))
+        sample=sorted(random.sample(pool,5))
 
-        ac = len(set(abs(a-b) for a,b in itertools.combinations(sample,2))) - 4
+        ac=len(set(abs(a-b) for a,b in itertools.combinations(sample,2)))-4
 
-        span = sample[-1]-sample[0]
+        span=sample[-1]-sample[0]
 
-        if 4 <= ac <= 8 and 20 <= span <= 32:
+        if 4<=ac<=8 and 20<=span<=32:
 
             if set(sample) not in history_sets:
 
                 if sample not in recs:
                     recs.append(sample)
 
-        if len(recs) >= 3:
+        if len(recs)>=3:
             break
 
-    cols = st.columns(3)
+    if len(recs)==0:
+
+        for _ in range(3):
+            recs.append(sorted(random.sample(pool,5)))
+
+    cols=st.columns(3)
 
     for i,r in enumerate(recs):
 
         with cols[i]:
 
-            st.success(f"推薦 {i+1}")
+            st.success(f"推薦組合 {i+1}")
 
             st.markdown(f"### {' '.join([f'{x:02d}' for x in r])}")
 
-            st.plotly_chart(draw_radar(r),use_container_width=True)
+            st.plotly_chart(radar(r),use_container_width=True)
 
 
 st.divider()
 
-st.subheader("歷史資料庫")
 
-df = pd.DataFrame(history[::-1],columns=["號1","號2","號3","號4","號5"])
+# 歷史資料
+st.subheader("歷史資料")
+
+df=pd.DataFrame(history[::-1],columns=["號1","號2","號3","號4","號5"])
 
 st.dataframe(df,height=400,use_container_width=True)
+
+
+# CSV下載
+csv=df.to_csv(index=False).encode("utf-8")
+
+st.download_button(
+    "下載 CSV",
+    csv,
+    "539_history.csv",
+    "text/csv"
+)
