@@ -4,44 +4,37 @@ import streamlit as st
 import numpy as np
 import itertools
 import requests
-import re
-from bs4 import BeautifulSoup
 from collections import Counter
 
 
 # ==========================
-# 抓539歷史資料
+# 抓官方539資料
 # ==========================
 
 @st.cache_data(ttl=3600)
 def fetch_539_history():
 
-    url = "https://www.pilio.idv.tw/lto539/drawlist/drawlist.asp"
-
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-
-    r = requests.get(url, headers=headers)
-    r.encoding = "utf-8"
-
-    soup = BeautifulSoup(r.text, "lxml")
-
-    rows = soup.find_all("tr")
+    url = "https://api.taiwanlottery.com/TLCAPIWeB/Lottery/Lotto539Result"
 
     history = []
 
-    for row in rows:
+    try:
 
-        nums = re.findall(r'\d{1,2}', row.text)
+        r = requests.get(url, timeout=10)
 
-        if len(nums) >= 5:
+        data = r.json()
 
-            numbers = list(map(int, nums[-5:]))
+        for item in data["content"]["lotto539Res"]:
 
-            if all(1 <= n <= 39 for n in numbers):
+            nums = item["drawNumberAppear"]
 
-                history.append(sorted(numbers))
+            numbers = [int(n) for n in nums]
+
+            history.append(sorted(numbers))
+
+    except:
+
+        st.error("官方資料抓取失敗")
 
     return history
 
@@ -121,11 +114,9 @@ def find_core_three(pool, pair_count):
 
         score = 0
 
-        pairs = list(itertools.combinations(combo,2))
+        for pair in itertools.combinations(combo,2):
 
-        for p in pairs:
-
-            score += pair_count.get(tuple(sorted(p)),0)
+            score += pair_count.get(tuple(sorted(pair)),0)
 
         if score > best_score:
 
@@ -157,54 +148,14 @@ def generate_sets(core,pool):
 
 
 # ==========================
-# 回測
-# ==========================
-
-def backtest(history):
-
-    hit2 = 0
-    hit3 = 0
-
-    for i in range(50,len(history)-1):
-
-        train = history[i:]
-
-        target = history[i-1]
-
-        pair_count = pair_matrix(train)
-
-        pool = monte_carlo_pool(train,50000)
-
-        core = find_core_three(pool,pair_count)
-
-        sets = generate_sets(core,pool)
-
-        for s in sets:
-
-            match = len(set(s) & set(target))
-
-            if match >= 3:
-
-                hit3 += 1
-
-                break
-
-            elif match == 2:
-
-                hit2 += 1
-
-    return hit2,hit3
-
-
-# ==========================
 # Streamlit UI
 # ==========================
 
-st.set_page_config(page_title="Gauss 539 V27",page_icon="🎯")
+st.set_page_config(page_title="Gauss 539 V27.5",page_icon="🎯")
 
-st.title("🎯 Gauss 539 V27 Stable")
+st.title("🎯 Gauss 539 V27.5 官方資料版")
 
-if st.button("抓取資料並分析"):
+if st.button("開始分析"):
 
     history = fetch_539_history()
 
@@ -253,13 +204,5 @@ if st.button("抓取資料並分析"):
     st.subheader("強勢號碼池")
 
     st.write(pool)
-
-    st.subheader("歷史回測")
-
-    hit2,hit3 = backtest(history)
-
-    st.write(f"中2次數：{hit2}")
-
-    st.write(f"中3次數：{hit3}")
 
     st.balloons()
