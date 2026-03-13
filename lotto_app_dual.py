@@ -1,7 +1,6 @@
 import random
 import pandas as pd
 import streamlit as st
-import numpy as np
 import itertools
 import requests
 import re
@@ -11,7 +10,7 @@ import plotly.graph_objects as go
 
 
 # ==========================
-# 抓539歷史資料
+# 抓取539歷史資料
 # ==========================
 @st.cache_data(ttl=3600)
 def fetch_539_history():
@@ -56,12 +55,9 @@ def fetch_539_history():
 
 
 # ==========================
-# HMM 強勢號碼池
+# HMM強勢號碼池
 # ==========================
 def hmm_analysis(history):
-
-    if len(history)<10:
-        return sorted(random.sample(range(1,40),15))
 
     all_nums=[n for d in history for n in d]
 
@@ -120,7 +116,7 @@ def radar(nums):
 
     metrics=[
         len([n for n in nums if n>=20])/5,
-        len([n for n in nums if n%2!=0])/5,
+        len([n for n in nums if n%2])/5,
         (sum(nums)-15)/170,
         (nums[-1]-nums[0])/38,
         ac/8
@@ -135,16 +131,16 @@ def radar(nums):
     fig.update_layout(
         polar=dict(radialaxis=dict(visible=False,range=[0,1])),
         showlegend=False,
-        height=250
+        height=260
     )
 
     return fig
 
 
 # ==========================
-# 歷史重合分析
+# 歷史3000期重合
 # ==========================
-def history_overlap_stats(history, combo):
+def history_overlap(history,combo):
 
     stats={0:0,1:0,2:0,3:0,4:0,5:0}
 
@@ -157,6 +153,26 @@ def history_overlap_stats(history, combo):
         stats[hit]+=1
 
     return stats
+
+
+# ==========================
+# 最新5期重合
+# ==========================
+def recent_overlap(history,combo):
+
+    combo=set(combo)
+
+    last=history[-5:][::-1]
+
+    result=[]
+
+    for i,draw in enumerate(last):
+
+        hit=len(combo & set(draw))
+
+        result.append((i,draw,hit))
+
+    return result
 
 
 # ==========================
@@ -180,18 +196,15 @@ def backtest_pool(history,window=200):
 
     total=sum(results.values())
 
-    stats={k:round(v/total*100,2) for k,v in results.items()}
-
-    return stats
+    return {k:round(v/total*100,2) for k,v in results.items()}
 
 
 # ==========================
-# UI
+# Streamlit UI
 # ==========================
-st.set_page_config(page_title="Gauss 539",layout="wide")
+st.set_page_config(page_title="Gauss539",layout="wide")
 
-st.title("🎯 Gauss 539 預測系統")
-
+st.title("🎯 Gauss 539 AI 分析系統")
 
 with st.spinner("抓取歷史資料..."):
 
@@ -218,7 +231,7 @@ st.divider()
 # ==========================
 # 預測
 # ==========================
-if st.button("執行預測"):
+if st.button("AI預測"):
 
     pool=hmm_analysis(history)
 
@@ -252,18 +265,27 @@ if st.button("執行預測"):
 
             st.markdown(f"### {' '.join([f'{x:02d}' for x in r])}")
 
-            stats=history_overlap_stats(history,r)
+            # 最新5期重合
+            st.write("最新5期重合")
 
-            st.write("歷史3000期重合分析")
+            recent=recent_overlap(history,r)
 
-            st.write({
-                "0顆":stats[0],
-                "1顆":stats[1],
-                "2顆":stats[2],
-                "3顆":stats[3],
-                "4顆":stats[4],
-                "5顆":stats[5]
-            })
+            for idx,draw,hit in recent:
+
+                label="最新期" if idx==0 else f"前{idx}期"
+
+                st.write(
+                    label,
+                    " ".join([f"{x:02d}" for x in draw]),
+                    f"→ {hit}顆"
+                )
+
+            # 歷史重合
+            stats=history_overlap(history,r)
+
+            st.write("歷史3000期重合")
+
+            st.write(stats)
 
             max_hit=max([k for k,v in stats.items() if v>0])
 
@@ -278,9 +300,9 @@ st.divider()
 # ==========================
 # 回測
 # ==========================
-if st.button("回測模型(最近200期)"):
+if st.button("模型回測 (200期)"):
 
-    stats=backtest_pool(history,200)
+    stats=backtest_pool(history)
 
     st.subheader("強勢池命中率 %")
 
