@@ -55,7 +55,7 @@ def fetch_539_history():
 
 
 # ==========================
-# HMM強勢號碼池
+# HMM 強勢號碼池
 # ==========================
 def hmm_analysis(history):
 
@@ -138,7 +138,7 @@ def radar(nums):
 
 
 # ==========================
-# 歷史3000期重合
+# 歷史重合分析
 # ==========================
 def history_overlap(history,combo):
 
@@ -156,7 +156,33 @@ def history_overlap(history,combo):
 
 
 # ==========================
-# 最新5期重合
+# 最新5期 vs 歷史
+# ==========================
+def latest_vs_history(history):
+
+    result=[]
+
+    last5=history[-5:][::-1]
+
+    for draw in last5:
+
+        stats={0:0,1:0,2:0,3:0,4:0,5:0}
+
+        for h in history:
+
+            hit=len(set(draw)&set(h))
+
+            stats[hit]+=1
+
+        max_hit=max([k for k,v in stats.items() if v>1])
+
+        result.append((draw,stats,max_hit))
+
+    return result
+
+
+# ==========================
+# 最近5期重合
 # ==========================
 def recent_overlap(history,combo):
 
@@ -176,7 +202,7 @@ def recent_overlap(history,combo):
 
 
 # ==========================
-# 回測強勢池
+# 回測
 # ==========================
 def backtest_pool(history,window=200):
 
@@ -228,8 +254,24 @@ for i,d in enumerate(history[-5:][::-1]):
 st.divider()
 
 
+# 最新五期 vs 歷史
+st.subheader("最新5期 vs 歷史3000期")
+
+latest_stats=latest_vs_history(history)
+
+for draw,stats,max_hit in latest_stats:
+
+    st.write("號碼:", " ".join([f"{x:02d}" for x in draw]))
+
+    st.write(stats)
+
+    st.write("歷史最大重合:",max_hit)
+
+    st.divider()
+
+
 # ==========================
-# 預測
+# AI預測
 # ==========================
 if st.button("AI預測"):
 
@@ -265,8 +307,7 @@ if st.button("AI預測"):
 
             st.markdown(f"### {' '.join([f'{x:02d}' for x in r])}")
 
-            # 最新5期重合
-            st.write("最新5期重合")
+            st.write("最近5期重合")
 
             recent=recent_overlap(history,r)
 
@@ -274,22 +315,13 @@ if st.button("AI預測"):
 
                 label="最新期" if idx==0 else f"前{idx}期"
 
-                st.write(
-                    label,
-                    " ".join([f"{x:02d}" for x in draw]),
-                    f"→ {hit}顆"
-                )
+                st.write(label," ".join([f"{x:02d}" for x in draw]),f"→ {hit}顆")
 
-            # 歷史重合
             stats=history_overlap(history,r)
 
             st.write("歷史3000期重合")
 
             st.write(stats)
-
-            max_hit=max([k for k,v in stats.items() if v>0])
-
-            st.write("歷史最大重合:",max_hit)
 
             st.plotly_chart(radar(r),use_container_width=True)
 
