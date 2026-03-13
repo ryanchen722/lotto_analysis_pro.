@@ -1,5 +1,4 @@
 import random
-import pandas as pd
 import streamlit as st
 import itertools
 import requests
@@ -50,11 +49,9 @@ def fetch_history():
 
 
 # ==========================
-# Score模型
+# 號碼Score
 # ==========================
 def score_numbers(history):
-
-    all_nums=[n for d in history for n in d]
 
     freq120=Counter([n for d in history[-120:] for n in d])
     freq30=Counter([n for d in history[-30:] for n in d])
@@ -74,18 +71,10 @@ def score_numbers(history):
 
         cold=min(last_seen/40,1)
 
-        if n<=13:
-            zone=0.33
-        elif n<=26:
-            zone=0.33
-        else:
-            zone=0.33
-
         score[n]=(
             0.35*hot+
-            0.25*trend+
-            0.20*cold+
-            0.20*zone
+            0.35*trend+
+            0.30*cold
         )
 
     return score
@@ -100,26 +89,26 @@ def strong_pool(history):
 
     sorted_nums=sorted(score.items(),key=lambda x:x[1],reverse=True)
 
-    return [n for n,s in sorted_nums[:15]],score
+    pool=[n for n,s in sorted_nums[:15]]
+
+    return pool,score
 
 
 # ==========================
-# 組合分數
+# 組合評分
 # ==========================
 def combo_score(combo,score):
 
     base=sum(score[n] for n in combo)
 
     ac=len(set(abs(a-b) for a,b in itertools.combinations(combo,2)))-4
-
     span=combo[-1]-combo[0]
-
     odd=len([n for n in combo if n%2])
 
     bonus=0
 
     if 4<=ac<=8:
-        bonus+=0.3
+        bonus+=0.4
 
     if 20<=span<=32:
         bonus+=0.3
@@ -131,41 +120,69 @@ def combo_score(combo,score):
 
 
 # ==========================
-# 推薦
+# 穩定推薦引擎
 # ==========================
-def generate_recommendations(history):
+def stable_recommend(history):
 
     pool,score=strong_pool(history)
 
-    candidates=[]
+    combos=[]
 
-    for _ in range(20000):
+    for _ in range(50000):
 
-        combo=sorted(random.sample(pool,5))
+        c=tuple(sorted(random.sample(pool,5)))
 
-        sc=combo_score(combo,score)
+        sc=combo_score(c,score)
 
-        candidates.append((combo,sc))
+        combos.append((c,sc))
 
-    candidates=sorted(candidates,key=lambda x:x[1],reverse=True)
+    combos=sorted(combos,key=lambda x:x[1],reverse=True)
 
-    results=[]
-    used=set()
+    top100=[c for c,s in combos[:100]]
 
-    for combo,sc in candidates:
+    freq=Counter(top100)
 
-        t=tuple(combo)
+    stable=sorted(freq.items(),key=lambda x:x[1],reverse=True)
 
-        if t not in used:
+    top10=[list(c) for c,_ in stable[:10]]
 
-            results.append(combo)
+    top3=top10[:3]
 
-            used.add(t)
+    return pool,top3,top10
 
-        if len(results)==3:
-            break
 
-    return pool,results
+# ==========================
+# 歷史重合
+# ==========================
+def history_overlap(history,combo):
+
+    stats={0:0,1:0,2:0,3:0,4:0,5:0}
+
+    for draw in history:
+
+        hit=len(set(combo)&set(draw))
+
+        stats[hit]+=1
+
+    return stats
+
+
+# ==========================
+# 最近5期
+# ==========================
+def recent_overlap(history,combo):
+
+    last=history[-5:][::-1]
+
+    result=[]
+
+    for draw in last:
+
+        hit=len(set(combo)&set(draw))
+
+        result.append((draw,hit))
+
+    return result
 
 
 # ==========================
@@ -198,43 +215,9 @@ def radar(nums):
 
 
 # ==========================
-# 歷史重合
-# ==========================
-def history_overlap(history,combo):
-
-    stats={0:0,1:0,2:0,3:0,4:0,5:0}
-
-    for draw in history:
-
-        hit=len(set(combo)&set(draw))
-
-        stats[hit]+=1
-
-    return stats
-
-
-# ==========================
-# 最近5期重合
-# ==========================
-def recent_overlap(history,combo):
-
-    last=history[-5:][::-1]
-
-    result=[]
-
-    for draw in last:
-
-        hit=len(set(combo)&set(draw))
-
-        result.append((draw,hit))
-
-    return result
-
-
-# ==========================
 # Streamlit
 # ==========================
-st.title("539 AI 分析")
+st.title("539 AI 穩定推薦系統")
 
 history=fetch_history()
 
@@ -250,9 +233,18 @@ for d in history[-5:][::-1]:
 
 if st.button("AI預測"):
 
-    pool,recs=generate_recommendations(history)
+    pool,recs,top10=stable_recommend(history)
 
     st.info("強勢池: "+",".join([f"{x:02d}" for x in pool]))
+
+    st.subheader("Top10推薦")
+
+    for r in top10:
+
+        st.write(" ".join([f"{x:02d}" for x in r]))
+
+
+    st.subheader("AI推薦3組")
 
     cols=st.columns(3)
 
