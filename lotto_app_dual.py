@@ -22,6 +22,7 @@ def fetch_history():
         url=f"https://www.pilio.idv.tw/lto539/list.asp?indexpage={page}"
 
         try:
+
             r=requests.get(url,headers=headers,timeout=10)
             r.encoding="big5"
 
@@ -85,6 +86,26 @@ def score_numbers(history):
 
 
 # ==========================
+# AI熱門球機率
+# ==========================
+def hot_probability(history):
+
+    score=score_numbers(history)
+
+    total=sum(score.values())
+
+    probs={}
+
+    for n,s in score.items():
+
+        probs[n]=(s/total)*100
+
+    probs=sorted(probs.items(),key=lambda x:x[1],reverse=True)
+
+    return probs[:10]
+
+
+# ==========================
 # 強勢池與核心
 # ==========================
 def strong_pool(history):
@@ -94,7 +115,7 @@ def strong_pool(history):
     sorted_nums=sorted(score.items(),key=lambda x:x[1],reverse=True)
 
     pool=[n for n,s in sorted_nums[:18]]
-    core=[n for n,s in sorted_nums[:2]]
+    core=[n for n,s in sorted_nums[:5]]
 
     return pool,core,score
 
@@ -148,7 +169,7 @@ def ai_recommend(history):
 
     for _ in range(60000):
 
-        c=set(core)
+        c=set(random.sample(core,2))
 
         while len(c)<5:
             c.add(random.choice(pool))
@@ -174,9 +195,37 @@ def ai_recommend(history):
 
     top10=[list(c) for c,_ in stable[:10]]
 
-    top3=top10[:3]
+    top3=[
+        top10[0],
+        top10[3],
+        top10[6]
+    ]
 
-    return pool,core,top3,top10
+    return pool,core[:2],top3,top10
+
+
+# ==========================
+# 四碼命中引擎
+# ==========================
+def four_hit_engine(history,top10):
+
+    results=[]
+
+    for combo in top10:
+
+        four_hits=0
+
+        for draw in history:
+
+            if len(set(combo)&set(draw))>=4:
+
+                four_hits+=1
+
+        results.append((combo,four_hits))
+
+    results=sorted(results,key=lambda x:x[1],reverse=True)
+
+    return results[:5]
 
 
 # ==========================
@@ -214,6 +263,26 @@ def recent_overlap(history,combo):
 
 
 # ==========================
+# 冷號爆發預測
+# ==========================
+def cold_burst(history):
+
+    last_seen={}
+
+    for n in range(1,40):
+
+        for i,d in enumerate(reversed(history)):
+
+            if n in d:
+                last_seen[n]=i
+                break
+
+    cold_candidates=sorted(last_seen.items(),key=lambda x:x[1],reverse=True)
+
+    return [n for n,_ in cold_candidates[:6]]
+
+
+# ==========================
 # 雷達圖
 # ==========================
 def radar(nums):
@@ -243,49 +312,11 @@ def radar(nums):
 
 
 # ==========================
-# AI號碼關聯分析
-# ==========================
-def number_association(history):
-
-    pair_counter=Counter()
-
-    for draw in history:
-
-        for a,b in itertools.combinations(draw,2):
-
-            pair=tuple(sorted((a,b)))
-
-            pair_counter[pair]+=1
-
-    return pair_counter.most_common(10)
-
-
-# ==========================
-# 冷號爆發預測
-# ==========================
-def cold_burst(history):
-
-    last_seen={}
-
-    for n in range(1,40):
-
-        for i,d in enumerate(reversed(history)):
-
-            if n in d:
-                last_seen[n]=i
-                break
-
-    cold_candidates=sorted(last_seen.items(),key=lambda x:x[1],reverse=True)
-
-    return [n for n,_ in cold_candidates[:6]]
-
-
-# ==========================
 # Streamlit UI
 # ==========================
-st.set_page_config(page_title="539 AI V33",layout="wide")
+st.set_page_config(page_title="539 AI V34",layout="wide")
 
-st.title("🎯 539 AI V33 預測系統")
+st.title("🎯 539 AI V34 預測系統")
 
 history=fetch_history()
 
@@ -315,6 +346,16 @@ if st.button("🚀 AI預測"):
     st.info("強勢池: "+",".join([f"{x:02d}" for x in pool]))
 
     st.success("AI核心號碼: "+" ".join([f"{x:02d}" for x in core]))
+
+
+    # AI熱門球
+    st.subheader("🔥 AI熱門球預測機率")
+
+    hot=hot_probability(history)
+
+    for n,p in hot:
+
+        st.write(f"{n:02d} → {p:.2f} %")
 
 
     # Top10
@@ -348,14 +389,14 @@ if st.button("🚀 AI預測"):
             st.plotly_chart(radar(r),use_container_width=True)
 
 
-    # AI號碼關聯
-    st.subheader("🔗 AI號碼關聯")
+    # 四碼引擎
+    st.subheader("🎯 四碼命中引擎")
 
-    pairs=number_association(history)
+    four=four_hit_engine(history,top10)
 
-    for pair,count in pairs:
+    for combo,count in four:
 
-        st.write(f"{pair[0]:02d} ↔ {pair[1]:02d} 出現 {count} 次")
+        st.write(" ".join([f"{x:02d}" for x in combo]),"→ 歷史4碼命中",count,"次")
 
 
     # 冷號爆發
@@ -363,4 +404,4 @@ if st.button("🚀 AI預測"):
 
     cold_nums=cold_burst(history)
 
-    st.write("可能爆發冷號："," ".join([f'{x:02d}' for x in cold_nums]))
+    st.write("可能爆發冷號："," ".join([f"{x:02d}" for x in cold_nums]))
