@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 
 
 # ==========================
-# 抓歷史資料
+# 抓取歷史資料
 # ==========================
 @st.cache_data(ttl=3600)
 def fetch_history():
@@ -21,35 +21,39 @@ def fetch_history():
 
         url=f"https://www.pilio.idv.tw/lto539/list.asp?indexpage={page}"
 
-        r=requests.get(url,headers=headers)
-        r.encoding="big5"
+        try:
+            r=requests.get(url,headers=headers,timeout=10)
+            r.encoding="big5"
 
-        soup=BeautifulSoup(r.text,"lxml")
+            soup=BeautifulSoup(r.text,"lxml")
 
-        rows=soup.find_all("tr")
+            rows=soup.find_all("tr")
 
-        for row in rows:
+            for row in rows:
 
-            nums=re.findall(r'\b\d{1,2}\b',row.text)
+                nums=re.findall(r'\b\d{1,2}\b',row.text)
 
-            if len(nums)>=5:
+                if len(nums)>=5:
 
-                n=list(map(int,nums[-5:]))
+                    n=list(map(int,nums[-5:]))
 
-                n=[x for x in n if 1<=x<=39]
+                    n=[x for x in n if 1<=x<=39]
 
-                if len(n)==5:
+                    if len(n)==5:
 
-                    draw=sorted(n)
+                        draw=sorted(n)
 
-                    if draw not in history:
-                        history.append(draw)
+                        if draw not in history:
+                            history.append(draw)
+
+        except:
+            break
 
     return history[::-1]
 
 
 # ==========================
-# 號碼Score
+# Score模型
 # ==========================
 def score_numbers(history):
 
@@ -72,16 +76,16 @@ def score_numbers(history):
         cold=min(last_seen/40,1)
 
         score[n]=(
-            0.35*hot+
-            0.35*trend+
-            0.30*cold
+            0.4*hot+
+            0.3*trend+
+            0.3*cold
         )
 
     return score
 
 
 # ==========================
-# 強勢池
+# 強勢池與核心
 # ==========================
 def strong_pool(history):
 
@@ -89,9 +93,29 @@ def strong_pool(history):
 
     sorted_nums=sorted(score.items(),key=lambda x:x[1],reverse=True)
 
-    pool=[n for n,s in sorted_nums[:15]]
+    pool=[n for n,s in sorted_nums[:18]]
+    core=[n for n,s in sorted_nums[:2]]
 
-    return pool,score
+    return pool,core,score
+
+
+# ==========================
+# 結構預測
+# ==========================
+def structure_predict(history):
+
+    odd=[]
+    span=[]
+
+    for d in history[-200:]:
+
+        odd.append(len([n for n in d if n%2]))
+        span.append(max(d)-min(d))
+
+    odd_mode=Counter(odd).most_common(1)[0][0]
+    span_avg=int(sum(span)/len(span))
+
+    return odd_mode,span_avg
 
 
 # ==========================
@@ -102,39 +126,43 @@ def combo_score(combo,score):
     base=sum(score[n] for n in combo)
 
     ac=len(set(abs(a-b) for a,b in itertools.combinations(combo,2)))-4
-    span=combo[-1]-combo[0]
-    odd=len([n for n in combo if n%2])
 
     bonus=0
 
     if 4<=ac<=8:
-        bonus+=0.4
-
-    if 20<=span<=32:
-        bonus+=0.3
-
-    if odd in [2,3]:
-        bonus+=0.3
+        bonus+=0.5
 
     return base+bonus
 
 
 # ==========================
-# 穩定推薦引擎
+# AI推薦引擎
 # ==========================
-def stable_recommend(history):
+def ai_recommend(history):
 
-    pool,score=strong_pool(history)
+    pool,core,score=strong_pool(history)
+
+    odd_target,span_target=structure_predict(history)
 
     combos=[]
 
-    for _ in range(50000):
+    for _ in range(60000):
 
-        c=tuple(sorted(random.sample(pool,5)))
+        c=set(core)
 
-        sc=combo_score(c,score)
+        while len(c)<5:
+            c.add(random.choice(pool))
 
-        combos.append((c,sc))
+        c=tuple(sorted(c))
+
+        odd=len([n for n in c if n%2])
+        span=c[-1]-c[0]
+
+        if abs(odd-odd_target)<=1 and abs(span-span_target)<=6:
+
+            sc=combo_score(c,score)
+
+            combos.append((c,sc))
 
     combos=sorted(combos,key=lambda x:x[1],reverse=True)
 
@@ -148,11 +176,11 @@ def stable_recommend(history):
 
     top3=top10[:3]
 
-    return pool,top3,top10
+    return pool,core,top3,top10
 
 
 # ==========================
-# 歷史重合
+# 歷史重合分析
 # ==========================
 def history_overlap(history,combo):
 
@@ -168,7 +196,7 @@ def history_overlap(history,combo):
 
 
 # ==========================
-# 最近5期
+# 最近五期重合
 # ==========================
 def recent_overlap(history,combo):
 
@@ -215,44 +243,95 @@ def radar(nums):
 
 
 # ==========================
-# Streamlit
+# AI號碼關聯分析
 # ==========================
-st.title("539 AI 穩定推薦系統")
+def number_association(history):
+
+    pair_counter=Counter()
+
+    for draw in history:
+
+        for a,b in itertools.combinations(draw,2):
+
+            pair=tuple(sorted((a,b)))
+
+            pair_counter[pair]+=1
+
+    return pair_counter.most_common(10)
+
+
+# ==========================
+# 冷號爆發預測
+# ==========================
+def cold_burst(history):
+
+    last_seen={}
+
+    for n in range(1,40):
+
+        for i,d in enumerate(reversed(history)):
+
+            if n in d:
+                last_seen[n]=i
+                break
+
+    cold_candidates=sorted(last_seen.items(),key=lambda x:x[1],reverse=True)
+
+    return [n for n,_ in cold_candidates[:6]]
+
+
+# ==========================
+# Streamlit UI
+# ==========================
+st.set_page_config(page_title="539 AI V33",layout="wide")
+
+st.title("🎯 539 AI V33 預測系統")
 
 history=fetch_history()
 
 st.write("歷史期數:",len(history))
 
 
-st.subheader("最新五期")
+# 最新五期
+st.subheader("📅 最新五期")
 
-for d in history[-5:][::-1]:
+cols=st.columns(5)
 
-    st.write(" ".join([f"{x:02d}" for x in d]))
+for i,d in enumerate(history[-5:][::-1]):
+
+    with cols[i]:
+
+        st.metric(
+            label=f"第 {i+1} 期",
+            value=" ".join([f"{x:02d}" for x in d])
+        )
 
 
-if st.button("AI預測"):
+# AI預測
+if st.button("🚀 AI預測"):
 
-    pool,recs,top10=stable_recommend(history)
+    pool,core,recs,top10=ai_recommend(history)
 
     st.info("強勢池: "+",".join([f"{x:02d}" for x in pool]))
 
-    st.subheader("Top10推薦")
+    st.success("AI核心號碼: "+" ".join([f"{x:02d}" for x in core]))
+
+
+    # Top10
+    st.subheader("📊 Top10推薦")
 
     for r in top10:
-
         st.write(" ".join([f"{x:02d}" for x in r]))
 
 
-    st.subheader("AI推薦3組")
+    # AI推薦
+    st.subheader("🎯 AI推薦3組")
 
     cols=st.columns(3)
 
     for i,r in enumerate(recs):
 
         with cols[i]:
-
-            st.success("推薦")
 
             st.markdown("### "+" ".join([f"{x:02d}" for x in r]))
 
@@ -266,4 +345,22 @@ if st.button("AI預測"):
 
             st.write(history_overlap(history,r))
 
-            st.plotly_chart(radar(r))
+            st.plotly_chart(radar(r),use_container_width=True)
+
+
+    # AI號碼關聯
+    st.subheader("🔗 AI號碼關聯")
+
+    pairs=number_association(history)
+
+    for pair,count in pairs:
+
+        st.write(f"{pair[0]:02d} ↔ {pair[1]:02d} 出現 {count} 次")
+
+
+    # 冷號爆發
+    st.subheader("❄️ 冷號爆發預測")
+
+    cold_nums=cold_burst(history)
+
+    st.write("可能爆發冷號："," ".join([f'{x:02d}' for x in cold_nums]))
