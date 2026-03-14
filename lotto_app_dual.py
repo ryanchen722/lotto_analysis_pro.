@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 
 
 # ==========================
-# 抓取歷史資料
+# 抓歷史資料
 # ==========================
 @st.cache_data(ttl=3600)
 def fetch_history():
@@ -106,7 +106,7 @@ def hot_probability(history):
 
 
 # ==========================
-# 強勢池與核心
+# 強勢池
 # ==========================
 def strong_pool(history):
 
@@ -115,6 +115,7 @@ def strong_pool(history):
     sorted_nums=sorted(score.items(),key=lambda x:x[1],reverse=True)
 
     pool=[n for n,s in sorted_nums[:18]]
+
     core=[n for n,s in sorted_nums[:5]]
 
     return pool,core,score
@@ -148,16 +149,14 @@ def combo_score(combo,score):
 
     ac=len(set(abs(a-b) for a,b in itertools.combinations(combo,2)))-4
 
-    bonus=0
-
     if 4<=ac<=8:
-        bonus+=0.5
+        base+=0.5
 
-    return base+bonus
+    return base
 
 
 # ==========================
-# AI推薦引擎
+# AI推薦
 # ==========================
 def ai_recommend(history):
 
@@ -165,7 +164,7 @@ def ai_recommend(history):
 
     odd_target,span_target=structure_predict(history)
 
-    combos=[]
+    combos=set()
 
     for _ in range(60000):
 
@@ -181,31 +180,33 @@ def ai_recommend(history):
 
         if abs(odd-odd_target)<=1 and abs(span-span_target)<=6:
 
-            sc=combo_score(c,score)
+            combos.add(c)
 
-            combos.append((c,sc))
+    combos=list(combos)
 
-    combos=sorted(combos,key=lambda x:x[1],reverse=True)
+    scored=[(c,combo_score(c,score)) for c in combos]
 
-    top100=[c for c,s in combos[:100]]
+    scored=sorted(scored,key=lambda x:x[1],reverse=True)
 
-    freq=Counter(top100)
+    top10=[list(c) for c,_ in scored[:10]]
 
-    stable=sorted(freq.items(),key=lambda x:x[1],reverse=True)
+    # 安全產生3組
+    top3=[]
 
-    top10=[list(c) for c,_ in stable[:10]]
+    for i in [0,3,6]:
 
-    top3=[
-        top10[0],
-        top10[3],
-        top10[6]
-    ]
+        if i < len(top10):
+            top3.append(top10[i])
+
+    while len(top3)<3 and len(top10)>len(top3):
+
+        top3.append(top10[len(top3)])
 
     return pool,core[:2],top3,top10
 
 
 # ==========================
-# 四碼命中引擎
+# 四碼引擎
 # ==========================
 def four_hit_engine(history,top10):
 
@@ -223,29 +224,11 @@ def four_hit_engine(history,top10):
 
         results.append((combo,four_hits))
 
-    results=sorted(results,key=lambda x:x[1],reverse=True)
-
-    return results[:5]
+    return sorted(results,key=lambda x:x[1],reverse=True)[:5]
 
 
 # ==========================
-# 歷史重合分析
-# ==========================
-def history_overlap(history,combo):
-
-    stats={0:0,1:0,2:0,3:0,4:0,5:0}
-
-    for draw in history:
-
-        hit=len(set(combo)&set(draw))
-
-        stats[hit]+=1
-
-    return stats
-
-
-# ==========================
-# 最近五期重合
+# 最近五期
 # ==========================
 def recent_overlap(history,combo):
 
@@ -263,7 +246,7 @@ def recent_overlap(history,combo):
 
 
 # ==========================
-# 冷號爆發預測
+# 冷號爆發
 # ==========================
 def cold_burst(history):
 
@@ -312,11 +295,11 @@ def radar(nums):
 
 
 # ==========================
-# Streamlit UI
+# UI
 # ==========================
-st.set_page_config(page_title="539 AI V34",layout="wide")
+st.set_page_config(page_title="539 AI V35",layout="wide")
 
-st.title("🎯 539 AI V34 預測系統")
+st.title("🎯 539 AI V35 穩定版")
 
 history=fetch_history()
 
@@ -324,49 +307,45 @@ st.write("歷史期數:",len(history))
 
 
 # 最新五期
-st.subheader("📅 最新五期")
+st.subheader("最新五期")
 
 cols=st.columns(5)
 
 for i,d in enumerate(history[-5:][::-1]):
 
-    with cols[i]:
-
-        st.metric(
-            label=f"第 {i+1} 期",
-            value=" ".join([f"{x:02d}" for x in d])
-        )
+    cols[i].metric(
+        label=f"{i+1}",
+        value=" ".join([f"{x:02d}" for x in d])
+    )
 
 
 # AI預測
-if st.button("🚀 AI預測"):
+if st.button("AI預測"):
 
     pool,core,recs,top10=ai_recommend(history)
 
-    st.info("強勢池: "+",".join([f"{x:02d}" for x in pool]))
+    st.write("強勢池:",pool)
 
-    st.success("AI核心號碼: "+" ".join([f"{x:02d}" for x in core]))
-
-
-    # AI熱門球
-    st.subheader("🔥 AI熱門球預測機率")
-
-    hot=hot_probability(history)
-
-    for n,p in hot:
-
-        st.write(f"{n:02d} → {p:.2f} %")
+    st.write("AI核心:",core)
 
 
-    # Top10
-    st.subheader("📊 Top10推薦")
+    st.subheader("🔥 AI熱門球機率")
+
+    for n,p in hot_probability(history):
+
+        st.write(f"{n:02d} → {p:.2f}%")
+
+
+
+    st.subheader("Top10推薦")
 
     for r in top10:
-        st.write(" ".join([f"{x:02d}" for x in r]))
+
+        st.write(r)
 
 
-    # AI推薦
-    st.subheader("🎯 AI推薦3組")
+
+    st.subheader("AI推薦3組")
 
     cols=st.columns(3)
 
@@ -374,34 +353,24 @@ if st.button("🚀 AI預測"):
 
         with cols[i]:
 
-            st.markdown("### "+" ".join([f"{x:02d}" for x in r]))
-
-            st.write("最近5期")
+            st.write(r)
 
             for draw,hit in recent_overlap(history,r):
 
-                st.write(" ".join([f"{x:02d}" for x in draw]),"→",hit)
-
-            st.write("歷史3000期")
-
-            st.write(history_overlap(history,r))
+                st.write(draw,"→",hit)
 
             st.plotly_chart(radar(r),use_container_width=True)
 
 
-    # 四碼引擎
-    st.subheader("🎯 四碼命中引擎")
 
-    four=four_hit_engine(history,top10)
+    st.subheader("四碼命中引擎")
 
-    for combo,count in four:
+    for combo,count in four_hit_engine(history,top10):
 
-        st.write(" ".join([f"{x:02d}" for x in combo]),"→ 歷史4碼命中",count,"次")
+        st.write(combo,"→ 4碼命中",count)
 
 
-    # 冷號爆發
-    st.subheader("❄️ 冷號爆發預測")
 
-    cold_nums=cold_burst(history)
+    st.subheader("冷號爆發")
 
-    st.write("可能爆發冷號："," ".join([f"{x:02d}" for x in cold_nums]))
+    st.write(cold_burst(history))
