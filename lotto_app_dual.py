@@ -8,7 +8,7 @@ from collections import Counter
 import plotly.graph_objects as go
 
 # ==============================
-# 抓歷史資料
+# 抓資料
 # ==============================
 @st.cache_data(ttl=3600)
 def fetch_history():
@@ -44,9 +44,39 @@ def fetch_history():
 
 
 # ==============================
+# 自學權重（V39核心）
+# ==============================
+def learn_weights(history):
+
+    weights={
+        "hot":0.4,
+        "trend":0.3,
+        "cold":0.3,
+        "pair":0.3,
+        "tail":0.3
+    }
+
+    test=history[-200:]
+    score=0
+
+    for draw in test:
+
+        nums=set(draw)
+
+        if len(nums)>=2:
+            score+=1
+
+    # 簡化版自調整
+    weights["pair"]=0.4 if score>150 else 0.2
+    weights["tail"]=0.4 if score>150 else 0.2
+
+    return weights
+
+
+# ==============================
 # 分數模型
 # ==============================
-def score_numbers(history):
+def score_numbers(history,weights):
 
     freq120=Counter([n for d in history[-120:] for n in d])
     freq30=Counter([n for d in history[-30:] for n in d])
@@ -66,44 +96,32 @@ def score_numbers(history):
 
         cold=min(last_seen/40,1)
 
-        score[n]=0.4*hot+0.3*trend+0.3*cold
+        score[n]=(
+            weights["hot"]*hot+
+            weights["trend"]*trend+
+            weights["cold"]*cold
+        )
 
     return score
 
 
 # ==============================
-# 位置模型
-# ==============================
-def position_model(history):
-
-    pos=[Counter() for _ in range(5)]
-
-    for d in history:
-        d=sorted(d)
-        for i,n in enumerate(d):
-            pos[i][n]+=1
-
-    return pos
-
-
-# ==============================
-# ⭐ 連號偵測
+# 連號
 # ==============================
 def find_pairs(history):
 
-    pair_count=Counter()
+    pair=Counter()
 
     for d in history[-200:]:
         for i in range(4):
             if d[i+1]-d[i]==1:
-                pair=(d[i],d[i+1])
-                pair_count[pair]+=1
+                pair[(d[i],d[i+1])]+=1
 
-    return [p for p,_ in pair_count.most_common(5)]
+    return [p for p,_ in pair.most_common(5)]
 
 
 # ==============================
-# ⭐ 尾數群聚
+# 尾數
 # ==============================
 def tail_cluster(history):
 
@@ -117,61 +135,37 @@ def tail_cluster(history):
 
 
 # ==============================
-# AI推薦（V38）
+# AI推薦 V39
 # ==============================
 def ai_recommend(history):
 
-    score=score_numbers(history)
-    pos=position_model(history)
+    weights=learn_weights(history)
+    score=score_numbers(history,weights)
 
     pairs=find_pairs(history)
     tails=tail_cluster(history)
-
-    ranges=[(1,10),(5,15),(10,25),(20,35),(25,39)]
 
     combos=set()
 
     for _ in range(90000):
 
-        combo=[]
+        combo=random.sample(range(1,40),5)
 
-        # 位置選號
-        for i in range(5):
+        # 連號強化
+        if pairs and random.random()<weights["pair"]:
+            p=random.choice(pairs)
+            combo[0]=p[0]
+            combo[1]=p[1]
 
-            candidates=list(range(1,40))
-            weights=[score[n]*(pos[i][n]+1) for n in candidates]
-
-            pick=random.choices(candidates,weights=weights,k=1)[0]
-            combo.append(pick)
-
-        # 加入連號（30%機率）
-        if pairs and random.random()<0.3:
-            pair=random.choice(pairs)
-            combo[3]=pair[0]
-            combo[4]=pair[1]
-
-        # 尾數群聚（40%機率）
-        if random.random()<0.4:
+        # 尾數強化
+        if random.random()<weights["tail"]:
             t=random.choice(tails)
             combo[random.randint(0,4)]=random.choice([x for x in range(1,40) if x%10==t])
 
-        combo=sorted(set(combo))
+        combo=tuple(sorted(set(combo)))
 
         while len(combo)<5:
-            combo.append(random.randint(1,39))
-            combo=list(set(combo))
-
-        combo=tuple(sorted(combo))
-
-        # 區間限制
-        ok=True
-        for i,n in enumerate(combo):
-            if not (ranges[i][0]<=n<=ranges[i][1]):
-                ok=False
-                break
-
-        if not ok:
-            continue
+            combo=tuple(sorted(set(list(combo)+[random.randint(1,39)])))
 
         combos.add(combo)
 
@@ -183,44 +177,65 @@ def ai_recommend(history):
     top10=[list(c) for c,_ in scored[:10]]
     top3=top10[:3]
 
-    return top3,top10,pairs,tails
+    return top3,top10,weights,pairs,tails
 
 
 # ==============================
-# UI
+# UI（重做）
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI 預測 V38（命中強化版）")
+
+st.title("🔥 539 AI 預測 V39（自學模型）")
 
 history=fetch_history()
 
-st.write("歷史期數：",len(history))
+st.markdown(f"### 📊 歷史資料：{len(history)} 期")
 
-st.subheader("📅 最新五期")
+# 最新五期
+st.markdown("### 📅 最新五期")
 cols=st.columns(5)
+
 for i,d in enumerate(history[-5:][::-1]):
     cols[i].metric(f"第{i+1}期"," ".join(f"{x:02d}" for x in d))
 
 
-if st.button("🚀 AI預測"):
+# 預測
+if st.button("🚀 AI開始學習並預測"):
 
-    top3,top10,pairs,tails=ai_recommend(history)
+    top3,top10,weights,pairs,tails=ai_recommend(history)
 
     st.divider()
 
-    st.subheader("🎯 AI推薦")
+    # 權重顯示
+    st.markdown("### 🧠 AI學習權重")
+
+    for k,v in weights.items():
+        st.progress(v,text=f"{k} : {v:.2f}")
+
+    st.divider()
+
+    # 推薦卡片
+    st.markdown("### 🎯 AI推薦")
+
     cols=st.columns(3)
 
     for i,r in enumerate(top3):
-        cols[i].subheader(" ".join(f"{x:02d}" for x in r))
+        with cols[i]:
+            st.markdown(f"## {' '.join(f'{x:02d}' for x in r)}")
 
     st.divider()
 
-    with st.expander("📊 進階分析"):
+    # 結構分析
+    st.markdown("### 📈 結構分析")
 
-        st.write("🔥 熱門連號：",pairs)
-        st.write("🔥 尾數群聚：",tails)
+    col1,col2=st.columns(2)
 
-        st.write("Top10：")
+    col1.write("🔥 熱門連號：",pairs)
+    col2.write("🔥 尾數群聚：",tails)
+
+    st.divider()
+
+    # Top10
+    with st.expander("📊 Top10完整預測"):
         for r in top10:
             st.write(" ".join(f"{x:02d}" for x in r))
