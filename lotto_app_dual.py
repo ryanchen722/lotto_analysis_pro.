@@ -4,6 +4,8 @@ import requests
 import re
 from bs4 import BeautifulSoup
 from collections import Counter
+import json
+import os
 
 # ==============================
 # 抓資料
@@ -42,7 +44,23 @@ def fetch_history():
 
 
 # ==============================
-# 分數模型
+# 尾數學習（V42核心）
+# ==============================
+def learn_tail_distribution(history):
+
+    recent = history[-100:]
+    tails = [n%10 for d in recent for n in d]
+    counter = Counter(tails)
+
+    total = sum(counter.values())
+
+    prob = {t: counter[t]/total for t in range(10)}
+
+    return prob
+
+
+# ==============================
+# 分數模型（動態）
 # ==============================
 def score_numbers(history):
 
@@ -65,12 +83,12 @@ def score_numbers(history):
 
         cold=min(last_seen/40,1)
         cold_boost = 0.3 if last_seen>20 else 0
-        recent_boost = recent5[n]*0.15
+        recent_boost = recent5[n]*0.3  # 提高影響力
 
         score[n]=(
-            hot*0.35 +
-            trend*0.25 +
-            cold*0.25 +
+            hot*0.3 +
+            trend*0.2 +
+            cold*0.2 +
             cold_boost +
             recent_boost
         )
@@ -79,21 +97,21 @@ def score_numbers(history):
 
 
 # ==============================
-# 分佈過濾（V41核心）
+# 分佈限制（升級版）
 # ==============================
 def valid_combo(combo):
 
-    # ❌ 四連號直接丟
+    # 連號限制
     pair_count=sum(1 for i in range(4) if combo[i+1]-combo[i]==1)
     if pair_count>=3:
         return False
 
-    # ✅ 奇偶比
+    # 奇偶
     odd=sum(1 for n in combo if n%2==1)
     if not (odd==2 or odd==3):
         return False
 
-    # ✅ 區間分佈
+    # 區間
     zone1=sum(1 for n in combo if 1<=n<=13)
     zone2=sum(1 for n in combo if 14<=n<=26)
     zone3=sum(1 for n in combo if 27<=n<=39)
@@ -101,7 +119,7 @@ def valid_combo(combo):
     if min(zone1,zone2,zone3)==0:
         return False
 
-    # ✅ 和值
+    # 和值
     s=sum(combo)
     if not (80<=s<=140):
         return False
@@ -110,11 +128,12 @@ def valid_combo(combo):
 
 
 # ==============================
-# AI推薦
+# AI推薦（進化版）
 # ==============================
 def ai_recommend(history):
 
     score=score_numbers(history)
+    tail_prob=learn_tail_distribution(history)
     last_draw=history[-1]
 
     combos=set()
@@ -123,7 +142,6 @@ def ai_recommend(history):
 
         combo=random.sample(range(1,40),5)
 
-        # 避開上期
         if random.random()<0.7:
             combo=[n for n in combo if n not in last_draw]
 
@@ -145,7 +163,10 @@ def ai_recommend(history):
 
         base=sum(score[n] for n in c)
 
-        # 連號評分（修正後）
+        # 尾數評分（學習）
+        tail_score=sum(tail_prob[n%10] for n in c)
+
+        # 連號評分
         pair_count=sum(1 for i in range(4) if c[i+1]-c[i]==1)
 
         if pair_count==1:
@@ -155,13 +176,12 @@ def ai_recommend(history):
         else:
             pair_bonus=0
 
-        final_score=base+pair_bonus
+        final_score=base + tail_score + pair_bonus
 
         scored.append((c,final_score))
 
     scored=sorted(scored,key=lambda x:x[1],reverse=True)
 
-    # 🔥 不鎖死
     top_pool=scored[:50]
     picks=random.sample(top_pool,3)
 
@@ -175,7 +195,7 @@ def ai_recommend(history):
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI 預測 V41 Ultimate")
+st.title("🔥 539 AI 預測 V42 Evolution")
 
 history=fetch_history()
 
@@ -196,8 +216,7 @@ if st.button("🚀 AI開始預測"):
 
     st.divider()
 
-    # 推薦
-    st.markdown("### 🎯 AI推薦（V41分佈優化）")
+    st.markdown("### 🎯 AI推薦（V42自我學習）")
 
     cols=st.columns(3)
 
@@ -207,7 +226,6 @@ if st.button("🚀 AI開始預測"):
 
     st.divider()
 
-    # Top10
     with st.expander("📊 Top10參考"):
         for r in top10:
             st.write(" ".join(f"{x:02d}" for x in r))
