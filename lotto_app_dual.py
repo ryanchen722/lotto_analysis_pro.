@@ -42,7 +42,7 @@ def fetch_history():
 
 
 # ==============================
-# 核心分數模型（強化版）
+# 分數模型
 # ==============================
 def score_numbers(history):
 
@@ -54,22 +54,17 @@ def score_numbers(history):
 
     for n in range(1,40):
 
-        hot = freq120[n]/120
-        trend = freq30[n]/30
+        hot=freq120[n]/120
+        trend=freq30[n]/30
 
-        # 冷號（多久沒出）
         last_seen=50
         for i,d in enumerate(reversed(history)):
             if n in d:
                 last_seen=i
                 break
 
-        cold = min(last_seen/40,1)
-
-        # 冷號爆發（超過20期沒出 → 加強）
+        cold=min(last_seen/40,1)
         cold_boost = 0.3 if last_seen>20 else 0
-
-        # 最新期影響
         recent_boost = recent5[n]*0.15
 
         score[n]=(
@@ -84,7 +79,38 @@ def score_numbers(history):
 
 
 # ==============================
-# AI推薦（核心升級）
+# 分佈過濾（V41核心）
+# ==============================
+def valid_combo(combo):
+
+    # ❌ 四連號直接丟
+    pair_count=sum(1 for i in range(4) if combo[i+1]-combo[i]==1)
+    if pair_count>=3:
+        return False
+
+    # ✅ 奇偶比
+    odd=sum(1 for n in combo if n%2==1)
+    if not (odd==2 or odd==3):
+        return False
+
+    # ✅ 區間分佈
+    zone1=sum(1 for n in combo if 1<=n<=13)
+    zone2=sum(1 for n in combo if 14<=n<=26)
+    zone3=sum(1 for n in combo if 27<=n<=39)
+
+    if min(zone1,zone2,zone3)==0:
+        return False
+
+    # ✅ 和值
+    s=sum(combo)
+    if not (80<=s<=140):
+        return False
+
+    return True
+
+
+# ==============================
+# AI推薦
 # ==============================
 def ai_recommend(history):
 
@@ -93,11 +119,11 @@ def ai_recommend(history):
 
     combos=set()
 
-    for _ in range(120000):
+    for _ in range(150000):
 
         combo=random.sample(range(1,40),5)
 
-        # 避開上期（70%機率）
+        # 避開上期
         if random.random()<0.7:
             combo=[n for n in combo if n not in last_draw]
 
@@ -106,36 +132,37 @@ def ai_recommend(history):
 
         combo=tuple(sorted(combo))
 
+        if not valid_combo(combo):
+            continue
+
         combos.add(combo)
 
     combos=list(combos)
 
-    # 評分（加入命中導向）
     scored=[]
 
     for c in combos:
 
         base=sum(score[n] for n in c)
 
-        # 結構加分（連號 / 尾數）
-        pair_bonus=0
-        for i in range(4):
-            if c[i+1]-c[i]==1:
-                pair_bonus+=0.3
+        # 連號評分（修正後）
+        pair_count=sum(1 for i in range(4) if c[i+1]-c[i]==1)
 
-        tail=len(set([n%10 for n in c]))
-        tail_bonus = 0.2 if tail<=3 else 0
+        if pair_count==1:
+            pair_bonus=0.4
+        elif pair_count==2:
+            pair_bonus=0.2
+        else:
+            pair_bonus=0
 
-        final_score=base + pair_bonus + tail_bonus
+        final_score=base+pair_bonus
 
         scored.append((c,final_score))
 
     scored=sorted(scored,key=lambda x:x[1],reverse=True)
 
-    # 🔥 關鍵：不要鎖死
+    # 🔥 不鎖死
     top_pool=scored[:50]
-
-    # 隨機抽3組（重點）
     picks=random.sample(top_pool,3)
 
     top3=[list(c) for c,_ in picks]
@@ -148,7 +175,7 @@ def ai_recommend(history):
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI 預測 V40 Ultimate")
+st.title("🔥 539 AI 預測 V41 Ultimate")
 
 history=fetch_history()
 
@@ -162,15 +189,15 @@ for i,d in enumerate(history[-5:][::-1]):
     cols[i].metric(f"第{i+1}期"," ".join(f"{x:02d}" for x in d))
 
 
-# 按鈕
-if st.button("🚀 開始AI預測"):
+# 執行
+if st.button("🚀 AI開始預測"):
 
     top3,top10=ai_recommend(history)
 
     st.divider()
 
     # 推薦
-    st.markdown("### 🎯 AI推薦（動態）")
+    st.markdown("### 🎯 AI推薦（V41分佈優化）")
 
     cols=st.columns(3)
 
