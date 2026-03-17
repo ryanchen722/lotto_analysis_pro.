@@ -6,123 +6,235 @@ import re
 from bs4 import BeautifulSoup
 from collections import Counter
 import plotly.graph_objects as go
-import pandas as pd
 
 # ==============================
-# 抓取歷史資料 (鎖定 1000 期 / 12小時更新一次)
+# 抓歷史資料
 # ==============================
-@st.cache_data(ttl=43200) # 12小時 = 12 * 3600 秒
-def fetch_history(max_pages=50):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"}
+@st.cache_data(ttl=3600)
+def fetch_history():
+    headers = {"User-Agent": "Mozilla/5.0"}
     history = []
-    session = requests.Session()
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
 
-    for page in range(1, max_pages + 1):
+    for page in range(1, 120):
         url = f"https://www.pilio.idv.tw/lto539/list.asp?indexpage={page}"
+
         try:
-            r = session.get(url, headers=headers, timeout=10)
+            r = requests.get(url, headers=headers, timeout=10)
             r.encoding = "big5"
+
             soup = BeautifulSoup(r.text, "lxml")
             rows = soup.find_all("tr")
 
             for row in rows:
                 nums = re.findall(r'\b\d{1,2}\b', row.text)
+
                 if len(nums) >= 5:
                     n = list(map(int, nums[-5:]))
                     n = [x for x in n if 1 <= x <= 39]
+
                     if len(n) == 5:
                         draw = sorted(n)
+
                         if draw not in history:
                             history.append(draw)
-            
-            if page % 10 == 0:
-                progress_bar.progress(page / max_pages)
-                status_text.text(f"已同步大數據：{len(history)} 期...")
+
         except:
             break
 
-    progress_bar.empty()
-    status_text.empty()
-    return history[::-1] # 由舊到新
+    return history[::-1]
+
 
 # ==============================
-# Score 模型 (權重計算)
+# 分數模型
 # ==============================
 def score_numbers(history):
     freq120 = Counter([n for d in history[-120:] for n in d])
     freq30 = Counter([n for d in history[-30:] for n in d])
-    
+
     score = {}
+
     for n in range(1, 40):
         hot = freq120[n] / 120
         trend = freq30[n] / 30
+
         last_seen = 0
         for i, d in enumerate(reversed(history)):
             if n in d:
                 last_seen = i
                 break
+
         cold = min(last_seen / 40, 1)
+
         score[n] = 0.4 * hot + 0.3 * trend + 0.3 * cold
+
     return score
 
+
 # ==============================
-# AI 推薦引擎 (動態核心輪替)
+# ⭐ 位置模型
 # ==============================
-def ai_recommend(history):
+def position_model(history):
+    pos_freq = [Counter() for _ in range(5)]
+
+    for draw in history:
+        draw = sorted(draw)
+        for i, n in enumerate(draw):
+            pos_freq[i][n] += 1
+
+    return pos_freq
+
+
+# ==============================
+# 熱門球機率
+# ==============================
+def hot_probability(history):
+    score = score_numbers(history)
+    total = sum(score.values())
+
+    probs = {}
+    for n, s in score.items():
+        probs[n] = (s / total) * 100
+
+    return sorted(probs.items(), key=lambda x: x[1], reverse=True)[:10]
+
+
+# ==============================
+# 強勢池
+# ==============================
+def strong_pool(history):
     score = score_numbers(history)
     sorted_nums = sorted(score.items(), key=lambda x: x[1], reverse=True)
-    
-    # 強勢池 18 碼
-    pool = [n for n, s in sorted_nums[:18]]
-    # 核心候選 5 碼 (解決號碼不動的關鍵)
-    potential_cores = [n for n, s in sorted_nums[:5]]
-    
-    odd_list = [len([n for n in d if n % 2]) for d in history[-200:]]
-    span_list = [max(d) - min(d) for d in history[-200:]]
-    odd_target = Counter(odd_list).most_common(1)[0][0]
-    span_target = int(sum(span_list) / len(span_list))
 
-    history_sets = [set(d) for d in history]
+    pool = [n for n, s in sorted_nums[:18]]
+    core = [n for n, s in sorted_nums[:5]]
+
+    return pool, core, score
+
+
+# ==============================
+# 結構預測
+# ==============================
+def structure_predict(history):
+    odd = []
+    span = []
+
+    for d in history[-200:]:
+        odd.append(len([n for n in d if n % 2]))
+        span.append(max(d) - min(d))
+
+    return Counter(odd).most_common(1)[0][0], int(sum(span) / len(span))
+
+
+# ==============================
+# 組合評分
+# ==============================
+def combo_score(combo, score):
+    base = sum(score[n] for n in combo)
+
+    ac = len(set(abs(a - b) for a, b in itertools.combinations(combo, 2))) - 4
+    if 4 <= ac <= 8:
+        base += 0.5
+
+    return base
+
+
+# ==============================
+# ⭐ AI推薦（最終版）
+# ==============================
+def ai_recommend(history):
+    pool, core, score = strong_pool(history)
+    pos_freq = position_model(history)
+
+    odd_target, span_target = structure_predict(history)
+
+    ranges = [(1, 10), (5, 15), (10, 25), (20, 35), (25, 39)]
+
     combos = set()
 
-    # 模擬 80,000 次，尋找不重號組合
     for _ in range(80000):
-        # 關鍵：每次核心球都從前五強中隨機挑選 2 碼，增加組合活性
-        c = set(random.sample(potential_cores, 2))
-        while len(c) < 5:
-            c.add(random.choice(pool))
-        
-        sorted_c = tuple(sorted(list(c)))
-        
-        if set(sorted_c) in history_sets:
-            continue
-            
-        odd = len([n for n in sorted_c if n % 2])
-        span = sorted_c[-1] - sorted_c[0]
-        
-        # 符合體質條件
-        if abs(odd - odd_target) <= 1 and abs(span - span_target) <= 6:
-            combos.add(sorted_c)
-            if len(combos) >= 20: break
+        combo = []
 
-    # 評分排序，並加入 2% 的隨機擾動，讓接近的組合能輪替出現
-    scored_combos = sorted(
-        [(list(c), sum(score[n] for n in c) * random.uniform(0.98, 1.02)) for c in combos], 
-        key=lambda x: x[1], 
-        reverse=True
-    )
-    
-    top10 = [c for c, s in scored_combos[:10]]
-    return pool, potential_cores, top10[:3], top10
+        for i in range(5):
+            candidates = list(range(1, 40))
+            weights = [score[n] * (pos_freq[i][n] + 1) for n in candidates]
+
+            pick = random.choices(candidates, weights=weights, k=1)[0]
+            combo.append(pick)
+
+        combo = sorted(set(combo))
+
+        while len(combo) < 5:
+            combo.append(random.randint(1, 39))
+            combo = list(set(combo))
+
+        combo = tuple(sorted(combo))
+
+        # 區間限制
+        ok = True
+        for i, n in enumerate(combo):
+            if not (ranges[i][0] <= n <= ranges[i][1]):
+                ok = False
+                break
+
+        if not ok:
+            continue
+
+        # 結構限制
+        odd = len([n for n in combo if n % 2])
+        span = combo[-1] - combo[0]
+
+        if abs(odd - odd_target) <= 1 and abs(span - span_target) <= 6:
+            combos.add(combo)
+
+    combos = list(combos)
+
+    scored = [(c, combo_score(c, score)) for c in combos]
+    scored = sorted(scored, key=lambda x: x[1], reverse=True)
+
+    top10 = [list(c) for c, _ in scored[:10]]
+    top3 = top10[:3]
+
+    return top3, top10
+
 
 # ==============================
-# 雷達圖功能
+# 四碼引擎
+# ==============================
+def four_hit_engine(history, top10):
+    results = []
+
+    for combo in top10:
+        count = 0
+        for draw in history:
+            if len(set(combo) & set(draw)) >= 4:
+                count += 1
+
+        results.append((combo, count))
+
+    return sorted(results, key=lambda x: x[1], reverse=True)[:5]
+
+
+# ==============================
+# 冷號爆發
+# ==============================
+def cold_burst(history):
+    last_seen = {}
+
+    for n in range(1, 40):
+        for i, d in enumerate(reversed(history)):
+            if n in d:
+                last_seen[n] = i
+                break
+
+    return [n for n, _ in sorted(last_seen.items(), key=lambda x: x[1], reverse=True)[:6]]
+
+
+# ==============================
+# 雷達圖
 # ==============================
 def radar(nums):
-    ac = len(set(abs(a-b) for a, b in itertools.combinations(nums, 2))) - 4
+    ac = len(set(abs(a - b) for a, b in itertools.combinations(nums, 2))) - 4
+
     metrics = [
         len([n for n in nums if n >= 20]) / 5,
         len([n for n in nums if n % 2]) / 5,
@@ -130,53 +242,74 @@ def radar(nums):
         (nums[-1] - nums[0]) / 38,
         ac / 8
     ]
-    fig = go.Figure(data=go.Scatterpolar(r=metrics, theta=['大', '奇', '和值', '跨度', 'AC'], fill='toself'))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 1])), showlegend=False, height=200, margin=dict(l=30, r=30, t=20, b=20))
+
+    fig = go.Figure(data=go.Scatterpolar(
+        r=metrics,
+        theta=['大', '奇', '和值', '跨度', 'AC'],
+        fill='toself'
+    ))
+
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=False, range=[0, 1])),
+        showlegend=False
+    )
+
     return fig
 
+
 # ==============================
-# UI 配置
+# UI
 # ==============================
-st.set_page_config(page_title="539 AI 預測 V33.9", layout="wide")
-st.title("🎯 539 AI 預測系統 (動態核心版)")
+st.set_page_config(layout="wide")
 
-# 載入 1000 期 (緩存 12 小時)
-if 'history' not in st.session_state:
-    st.session_state.history = fetch_history(50)
+st.title("🎯 539 AI 預測 V37（最終穩定版）")
 
-history = st.session_state.history
+history = fetch_history()
 
-# 頂部：最新五期
-st.header("📅 最新五期開獎紀錄")
+st.write("歷史期數：", len(history))
+
+# 最新五期
+st.subheader("📅 最新五期")
+
 cols = st.columns(5)
 for i, d in enumerate(history[-5:][::-1]):
-    with cols[i]:
-        st.metric(label="最新期" if i==0 else f"前 {i} 期", value=" ".join([f"{x:02d}" for x in d]))
+    cols[i].metric(f"第{i+1}期", " ".join(f"{x:02d}" for x in d))
 
-st.divider()
 
-if st.button("🚀 執行 AI 深度預測"):
-    pool, cores, top3, top10 = ai_recommend(history)
-    
-    st.header("✨ AI 核心推薦組合")
-    st.caption(f"本輪預測核心種子球：{', '.join([f'{x:02d}' for x in cores])}")
-    
-    rec_cols = st.columns(3)
+# AI預測
+if st.button("🚀 AI預測"):
+
+    top3, top10 = ai_recommend(history)
+
+    st.divider()
+
+    # 熱門球
+    st.subheader("🔥 熱門球機率")
+    for n, p in hot_probability(history):
+        st.progress(p / 10, text=f"{n:02d} {p:.2f}%")
+
+    st.divider()
+
+    # 推薦
+    st.subheader("🎯 AI推薦")
+
+    cols = st.columns(3)
+    four = four_hit_engine(history, top10)
+
     for i, r in enumerate(top3):
-        with rec_cols[i]:
-            st.success(f"推薦組合 {i+1}")
-            st.markdown(f"## `{' - '.join([f'{x:02d}' for x in r])}`")
+        with cols[i]:
+            st.subheader(" ".join(f"{x:02d}" for x in r))
+
+            for combo, count in four:
+                if combo == r:
+                    st.success(f"歷史4碼命中 {count} 次")
+
             st.plotly_chart(radar(r), use_container_width=True)
-            st.caption("✅ 已過濾 1000 期不重號校驗")
 
-    with st.expander("📋 查看更多推薦 (Top 10)"):
-        df_top10 = pd.DataFrame([{"排名": f"第 {i+1} 名", "推薦號碼": " ".join([f"{x:02d}" for x in r])} for i, r in enumerate(top10)])
-        st.table(df_top10)
+    # 進階
+    with st.expander("📊 進階分析"):
+        st.write("Top10推薦：")
+        for r in top10:
+            st.write(" ".join(f"{x:02d}" for x in r))
 
-    st.balloons()
-else:
-    st.info("點擊上方按鈕開始模擬。數據每 12 小時自動更新。")
-
-st.sidebar.subheader("📊 數據統計")
-st.sidebar.write(f"當前載入期數：{len(history)}")
-st.sidebar.write("分析引擎：動態核心輪替 (Dynamic Core)")
+        st.write("冷號爆發：", cold_burst(history))
