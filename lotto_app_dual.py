@@ -5,7 +5,6 @@ import requests
 import re
 from bs4 import BeautifulSoup
 from collections import Counter
-import plotly.graph_objects as go
 
 # ==============================
 # 抓資料
@@ -44,7 +43,7 @@ def fetch_history():
 
 
 # ==============================
-# 自學權重（V39核心）
+# 自學權重
 # ==============================
 def learn_weights(history):
 
@@ -56,19 +55,20 @@ def learn_weights(history):
         "tail":0.3
     }
 
-    test=history[-200:]
-    score=0
+    recent=history[-200:]
+    pair_count=0
 
-    for draw in test:
+    for d in recent:
+        for i in range(4):
+            if d[i+1]-d[i]==1:
+                pair_count+=1
 
-        nums=set(draw)
+    if pair_count>60:
+        weights["pair"]=0.45
+    else:
+        weights["pair"]=0.2
 
-        if len(nums)>=2:
-            score+=1
-
-    # 簡化版自調整
-    weights["pair"]=0.4 if score>150 else 0.2
-    weights["tail"]=0.4 if score>150 else 0.2
+    weights["tail"]=0.4 if pair_count>60 else 0.25
 
     return weights
 
@@ -135,7 +135,7 @@ def tail_cluster(history):
 
 
 # ==============================
-# AI推薦 V39
+# AI推薦
 # ==============================
 def ai_recommend(history):
 
@@ -147,17 +147,17 @@ def ai_recommend(history):
 
     combos=set()
 
-    for _ in range(90000):
+    for _ in range(80000):
 
         combo=random.sample(range(1,40),5)
 
-        # 連號強化
+        # 連號
         if pairs and random.random()<weights["pair"]:
             p=random.choice(pairs)
             combo[0]=p[0]
             combo[1]=p[1]
 
-        # 尾數強化
+        # 尾數
         if random.random()<weights["tail"]:
             t=random.choice(tails)
             combo[random.randint(0,4)]=random.choice([x for x in range(1,40) if x%10==t])
@@ -181,11 +181,10 @@ def ai_recommend(history):
 
 
 # ==============================
-# UI（重做）
+# UI
 # ==============================
 st.set_page_config(layout="wide")
-
-st.title("🔥 539 AI 預測 V39（自學模型）")
+st.title("🔥 539 AI 預測 V39 UI Pro")
 
 history=fetch_history()
 
@@ -199,39 +198,46 @@ for i,d in enumerate(history[-5:][::-1]):
     cols[i].metric(f"第{i+1}期"," ".join(f"{x:02d}" for x in d))
 
 
-# 預測
-if st.button("🚀 AI開始學習並預測"):
+# 按鈕
+if st.button("🚀 AI開始預測"):
 
     top3,top10,weights,pairs,tails=ai_recommend(history)
 
     st.divider()
 
-    # 權重顯示
+    # 權重
     st.markdown("### 🧠 AI學習權重")
 
     for k,v in weights.items():
-        st.progress(v,text=f"{k} : {v:.2f}")
+        st.progress(v,text=f"{k}：{v:.2f}")
 
     st.divider()
 
-    # 推薦卡片
-    st.markdown("### 🎯 AI推薦")
+    # 推薦
+    st.markdown("### 🎯 AI推薦號碼")
 
     cols=st.columns(3)
 
     for i,r in enumerate(top3):
         with cols[i]:
-            st.markdown(f"## {' '.join(f'{x:02d}' for x in r)}")
+            st.markdown("#### 🎯 推薦組合")
+            st.success(" ".join(f"{x:02d}" for x in r))
 
     st.divider()
 
-    # 結構分析
+    # 結構
     st.markdown("### 📈 結構分析")
 
     col1,col2=st.columns(2)
 
-    col1.write("🔥 熱門連號：",pairs)
-    col2.write("🔥 尾數群聚：",tails)
+    with col1:
+        st.markdown("#### 🔥 熱門連號")
+        for p in pairs:
+            st.success(f"{p[0]:02d} - {p[1]:02d}")
+
+    with col2:
+        st.markdown("#### 🔥 尾數群聚")
+        st.info(" / ".join(str(t) for t in tails))
 
     st.divider()
 
