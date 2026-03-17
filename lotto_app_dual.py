@@ -1,6 +1,5 @@
 import random
 import streamlit as st
-import itertools
 import requests
 import re
 from bs4 import BeautifulSoup
@@ -20,8 +19,8 @@ def fetch_history():
         try:
             r=requests.get(url,headers=headers,timeout=10)
             r.encoding="big5"
-
             soup=BeautifulSoup(r.text,"lxml")
+
             rows=soup.find_all("tr")
 
             for row in rows:
@@ -43,152 +42,117 @@ def fetch_history():
 
 
 # ==============================
-# 自學權重
+# 核心分數模型（強化版）
 # ==============================
-def learn_weights(history):
-
-    weights={
-        "hot":0.4,
-        "trend":0.3,
-        "cold":0.3,
-        "pair":0.3,
-        "tail":0.3
-    }
-
-    recent=history[-200:]
-    pair_count=0
-
-    for d in recent:
-        for i in range(4):
-            if d[i+1]-d[i]==1:
-                pair_count+=1
-
-    if pair_count>60:
-        weights["pair"]=0.45
-    else:
-        weights["pair"]=0.2
-
-    weights["tail"]=0.4 if pair_count>60 else 0.25
-
-    return weights
-
-
-# ==============================
-# 分數模型
-# ==============================
-def score_numbers(history,weights):
+def score_numbers(history):
 
     freq120=Counter([n for d in history[-120:] for n in d])
     freq30=Counter([n for d in history[-30:] for n in d])
+    recent5=Counter([n for d in history[-5:] for n in d])
 
     score={}
 
     for n in range(1,40):
 
-        hot=freq120[n]/120
-        trend=freq30[n]/30
+        hot = freq120[n]/120
+        trend = freq30[n]/30
 
-        last_seen=0
+        # 冷號（多久沒出）
+        last_seen=50
         for i,d in enumerate(reversed(history)):
             if n in d:
                 last_seen=i
                 break
 
-        cold=min(last_seen/40,1)
+        cold = min(last_seen/40,1)
+
+        # 冷號爆發（超過20期沒出 → 加強）
+        cold_boost = 0.3 if last_seen>20 else 0
+
+        # 最新期影響
+        recent_boost = recent5[n]*0.15
 
         score[n]=(
-            weights["hot"]*hot+
-            weights["trend"]*trend+
-            weights["cold"]*cold
+            hot*0.35 +
+            trend*0.25 +
+            cold*0.25 +
+            cold_boost +
+            recent_boost
         )
 
     return score
 
 
 # ==============================
-# 連號
-# ==============================
-def find_pairs(history):
-
-    pair=Counter()
-
-    for d in history[-200:]:
-        for i in range(4):
-            if d[i+1]-d[i]==1:
-                pair[(d[i],d[i+1])]+=1
-
-    return [p for p,_ in pair.most_common(5)]
-
-
-# ==============================
-# 尾數
-# ==============================
-def tail_cluster(history):
-
-    tail=Counter()
-
-    for d in history[-200:]:
-        for n in d:
-            tail[n%10]+=1
-
-    return [t for t,_ in tail.most_common(3)]
-
-
-# ==============================
-# AI推薦
+# AI推薦（核心升級）
 # ==============================
 def ai_recommend(history):
 
-    weights=learn_weights(history)
-    score=score_numbers(history,weights)
-
-    pairs=find_pairs(history)
-    tails=tail_cluster(history)
+    score=score_numbers(history)
+    last_draw=history[-1]
 
     combos=set()
 
-    for _ in range(80000):
+    for _ in range(120000):
 
         combo=random.sample(range(1,40),5)
 
-        # 連號
-        if pairs and random.random()<weights["pair"]:
-            p=random.choice(pairs)
-            combo[0]=p[0]
-            combo[1]=p[1]
-
-        # 尾數
-        if random.random()<weights["tail"]:
-            t=random.choice(tails)
-            combo[random.randint(0,4)]=random.choice([x for x in range(1,40) if x%10==t])
-
-        combo=tuple(sorted(set(combo)))
+        # 避開上期（70%機率）
+        if random.random()<0.7:
+            combo=[n for n in combo if n not in last_draw]
 
         while len(combo)<5:
-            combo=tuple(sorted(set(list(combo)+[random.randint(1,39)])))
+            combo=list(set(combo+[random.randint(1,39)]))
+
+        combo=tuple(sorted(combo))
 
         combos.add(combo)
 
     combos=list(combos)
 
-    scored=[(c,sum(score[n] for n in c)) for c in combos]
+    # 評分（加入命中導向）
+    scored=[]
+
+    for c in combos:
+
+        base=sum(score[n] for n in c)
+
+        # 結構加分（連號 / 尾數）
+        pair_bonus=0
+        for i in range(4):
+            if c[i+1]-c[i]==1:
+                pair_bonus+=0.3
+
+        tail=len(set([n%10 for n in c]))
+        tail_bonus = 0.2 if tail<=3 else 0
+
+        final_score=base + pair_bonus + tail_bonus
+
+        scored.append((c,final_score))
+
     scored=sorted(scored,key=lambda x:x[1],reverse=True)
 
-    top10=[list(c) for c,_ in scored[:10]]
-    top3=top10[:3]
+    # 🔥 關鍵：不要鎖死
+    top_pool=scored[:50]
 
-    return top3,top10,weights,pairs,tails
+    # 隨機抽3組（重點）
+    picks=random.sample(top_pool,3)
+
+    top3=[list(c) for c,_ in picks]
+    top10=[list(c) for c,_ in scored[:10]]
+
+    return top3,top10
 
 
 # ==============================
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI 預測 V39 UI Pro")
+st.title("🔥 539 AI 預測 V40 Ultimate")
 
 history=fetch_history()
 
-st.markdown(f"### 📊 歷史資料：{len(history)} 期")
+st.markdown(f"### 📊 資料量：{len(history)}期")
 
 # 最新五期
 st.markdown("### 📅 最新五期")
@@ -199,49 +163,24 @@ for i,d in enumerate(history[-5:][::-1]):
 
 
 # 按鈕
-if st.button("🚀 AI開始預測"):
+if st.button("🚀 開始AI預測"):
 
-    top3,top10,weights,pairs,tails=ai_recommend(history)
-
-    st.divider()
-
-    # 權重
-    st.markdown("### 🧠 AI學習權重")
-
-    for k,v in weights.items():
-        st.progress(v,text=f"{k}：{v:.2f}")
+    top3,top10=ai_recommend(history)
 
     st.divider()
 
     # 推薦
-    st.markdown("### 🎯 AI推薦號碼")
+    st.markdown("### 🎯 AI推薦（動態）")
 
     cols=st.columns(3)
 
     for i,r in enumerate(top3):
         with cols[i]:
-            st.markdown("#### 🎯 推薦組合")
             st.success(" ".join(f"{x:02d}" for x in r))
 
     st.divider()
 
-    # 結構
-    st.markdown("### 📈 結構分析")
-
-    col1,col2=st.columns(2)
-
-    with col1:
-        st.markdown("#### 🔥 熱門連號")
-        for p in pairs:
-            st.success(f"{p[0]:02d} - {p[1]:02d}")
-
-    with col2:
-        st.markdown("#### 🔥 尾數群聚")
-        st.info(" / ".join(str(t) for t in tails))
-
-    st.divider()
-
     # Top10
-    with st.expander("📊 Top10完整預測"):
+    with st.expander("📊 Top10參考"):
         for r in top10:
             st.write(" ".join(f"{x:02d}" for x in r))
