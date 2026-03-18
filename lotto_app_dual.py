@@ -15,7 +15,7 @@ CSV_PATH = "539_history.csv"
 MAX_HISTORY = 1700
 
 # ==============================
-# 抓資料（回歸正確版本🔥）
+# 抓資料（穩定版）
 # ==============================
 def fetch_latest_pages(pages=3):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -33,18 +33,36 @@ def fetch_latest_pages(pages=3):
         for row in rows:
             nums = re.findall(r'\b\d{1,2}\b', row.text)
 
-            # 🔥 關鍵修正：只保留1~39
+            # 只保留1~39
             nums = [int(x) for x in nums if 1 <= int(x) <= 39]
 
             if len(nums) >= 5:
-                draw = sorted(nums[-5:])  # ← 核心：最後5個才是开奖号
+                draw = sorted(nums[-5:])
                 all_data.append(draw)
 
     return all_data
 
 
 # ==============================
-# 載入 + 增量更新
+# 驗證系統🔥
+# ==============================
+def validate_data(history):
+
+    errors = []
+
+    for i, d in enumerate(history[-50:]):
+
+        if len(d) != 5:
+            errors.append(f"第{i}筆數量錯誤: {d}")
+
+        if any(n < 1 or n > 39 for n in d):
+            errors.append(f"第{i}筆範圍錯誤: {d}")
+
+    return errors
+
+
+# ==============================
+# 載入資料
 # ==============================
 @st.cache_data(ttl=43200)
 def load_history():
@@ -56,7 +74,6 @@ def load_history():
         history = []
 
     latest = fetch_latest_pages()
-
     combined = history + latest
 
     # 去重
@@ -65,23 +82,18 @@ def load_history():
         if d not in unique:
             unique.append(d)
 
-    # 清洗資料
+    # 清洗
     cleaned = []
     for d in unique:
-        if (
-            isinstance(d, list)
-            and len(d) == 5
-            and all(1 <= int(x) <= 39 for x in d)
-        ):
+        if len(d) == 5 and all(1 <= int(x) <= 39 for x in d):
             cleaned.append(sorted([int(x) for x in d]))
 
-    # 🔥 重要：網站是新→舊，要轉成舊→新
+    # 新→舊 轉 舊→新
     cleaned = cleaned[::-1]
 
-    # 保留1700期
+    # 限制筆數
     cleaned = cleaned[-MAX_HISTORY:]
 
-    # 存檔
     pd.DataFrame(cleaned).to_csv(CSV_PATH, index=False)
 
     return cleaned
@@ -102,7 +114,6 @@ def score_numbers(history):
 
         base = short[n]*0.5 + mid[n]*0.3 + long[n]*0.2
 
-        # 冷號
         last_seen = 100
         for i, d in enumerate(reversed(history)):
             if n in d:
@@ -200,13 +211,24 @@ def analyze_hits(four_sets, history):
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI 四合策略 V45.1（穩定回歸版）")
+st.title("🔥 539 AI 四合策略 V46（驗證版）")
 
 history = load_history()
 
-st.markdown(f"### 📊 資料：{len(history)}期")
+# ==============================
+# 驗證顯示🔥
+# ==============================
+errors = validate_data(history)
 
-# 最新五期
+if errors:
+    st.error("❌ 資料異常，已停止AI預測")
+    for e in errors[:5]:
+        st.write(e)
+    st.stop()
+else:
+    st.success("🟢 資料正常，可進行預測")
+
+# 最新5期
 st.markdown("### 📅 最新五期")
 cols = st.columns(5)
 
@@ -214,10 +236,12 @@ for i, d in enumerate(history[-5:][::-1]):
     cols[i].metric(f"第{i+1}期", " ".join(f"{x:02d}" for x in d))
 
 # Debug
-with st.expander("🔍 資料檢查"):
+with st.expander("🔍 最近10期資料"):
     st.write(history[-10:])
 
+# ==============================
 # 按鈕
+# ==============================
 if st.button("🚀 產生策略"):
 
     recs = ai_recommend(history)
