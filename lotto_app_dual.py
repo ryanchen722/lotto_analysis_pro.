@@ -62,7 +62,7 @@ def validate_data(history):
 # ==============================
 # 載入資料
 # ==============================
-@st.cache_data(ttl=43200)
+@st.cache_data(ttl=10800)
 def load_history():
 
     if os.path.exists(CSV_PATH):
