@@ -12,7 +12,7 @@ MAX_HISTORY = 1700
 
 
 # ==============================
-# 🔥 正確抓法（完全不會抓錯）
+# 抓資料（穩定）
 # ==============================
 def fetch_latest_pages(pages=3):
 
@@ -27,7 +27,6 @@ def fetch_latest_pages(pages=3):
 
         soup = BeautifulSoup(r.text, "lxml")
 
-        # 🔥 關鍵：只找含有球號的font標籤
         balls = soup.find_all("font")
 
         temp = []
@@ -41,7 +40,6 @@ def fetch_latest_pages(pages=3):
                 if 1 <= n <= 39:
                     temp.append(n)
 
-                    # 每5個就是一組
                     if len(temp) == 5:
                         all_data.append(sorted(temp))
                         temp = []
@@ -53,13 +51,11 @@ def fetch_latest_pages(pages=3):
 # 驗證
 # ==============================
 def validate_data(history):
-
     for d in history:
         if len(d) != 5:
             return False
         if any(n < 1 or n > 39 for n in d):
             return False
-
     return True
 
 
@@ -76,7 +72,6 @@ def load_history():
         history = []
 
     latest = fetch_latest_pages()
-
     combined = history + latest
 
     unique = []
@@ -84,9 +79,7 @@ def load_history():
         if d not in unique:
             unique.append(d)
 
-    # 🔥 網站本來新→舊，這裡轉正確
     unique = unique[::-1]
-
     unique = unique[-MAX_HISTORY:]
 
     pd.DataFrame(unique).to_csv(CSV_PATH, index=False)
@@ -95,9 +88,39 @@ def load_history():
 
 
 # ==============================
-# 評分模型
+# 🔥 極端事件分析
 # ==============================
-def score_numbers(history):
+def extreme_analysis(history):
+
+    events = []
+    gaps = []
+    last_index = None
+
+    for i, d in enumerate(history):
+
+        # 👉 極端條件：最小號 >= 21
+        if min(d) >= 21:
+
+            events.append(i)
+
+            if last_index is not None:
+                gaps.append(i - last_index)
+
+            last_index = i
+
+    prob = len(events) / len(history) if history else 0
+    avg_gap = sum(gaps)/len(gaps) if gaps else 0
+
+    # 現在距離上次
+    current_gap = len(history) - 1 - last_index if last_index is not None else 0
+
+    return prob, avg_gap, current_gap
+
+
+# ==============================
+# 評分模型（加入極端判斷🔥）
+# ==============================
+def score_numbers(history, boost_extreme=False):
 
     short = Counter([n for d in history[-30:] for n in d])
     mid = Counter([n for d in history[-100:] for n in d])
@@ -117,9 +140,15 @@ def score_numbers(history):
 
         cold = min(last_seen/50, 1)
 
+        # 🔥 如果要爆冷 → 加強大號
+        if boost_extreme and n >= 21:
+            bonus = 1.5
+        else:
+            bonus = 0
+
         noise = random.uniform(0, 0.3)
 
-        score[n] = base + cold + noise
+        score[n] = base + cold + noise + bonus
 
     return score
 
@@ -128,8 +157,6 @@ def score_numbers(history):
 # AI推薦
 # ==============================
 def valid_combo(c):
-
-    c = sorted(c)
 
     if not (80 <= sum(c) <= 140):
         return False
@@ -140,9 +167,10 @@ def valid_combo(c):
     return True
 
 
-def ai_recommend(history):
+def ai_recommend(history, boost_extreme=False):
 
-    score = score_numbers(history)
+    score = score_numbers(history, boost_extreme)
+
     combos = set()
 
     for _ in range(80000):
@@ -197,34 +225,56 @@ def analyze_hits(four_sets, history):
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI V47（最終穩定版）")
+st.title("🔥 539 AI V48（極端事件判斷版）")
 
 history = load_history()
 
 if not validate_data(history):
-    st.error("❌ 資料抓取錯誤，已停止")
+    st.error("❌ 資料錯誤")
     st.stop()
+
+# ==============================
+# 極端分析顯示🔥
+# ==============================
+prob, avg_gap, current_gap = extreme_analysis(history)
+
+st.markdown("## 🧠 極端事件分析（最小號 ≥ 21）")
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric("發生機率", f"{prob*100:.2f}%")
+col2.metric("平均間隔", f"{avg_gap:.1f}期")
+col3.metric("目前間隔", f"{current_gap}期")
+
+# 判斷狀態
+if avg_gap > 0 and current_gap >= avg_gap * 0.9:
+    st.error("🔴 高機率區（可能快出現）")
+    boost = True
 else:
-    st.success("🟢 資料正常")
+    st.success("🟢 正常區")
+    boost = False
+
 
 # 最新五期
+st.markdown("### 📅 最新五期")
 cols = st.columns(5)
 for i, d in enumerate(history[-5:][::-1]):
     cols[i].metric(f"第{i+1}期", " ".join(f"{x:02d}" for x in d))
 
-with st.expander("最近10期"):
-    st.write(history[-10:])
 
-if st.button("🚀 預測"):
+# ==============================
+# 預測
+# ==============================
+if st.button("🚀 AI預測"):
 
-    recs = ai_recommend(history)
+    recs = ai_recommend(history, boost)
 
     st.markdown("## 🎯 AI推薦")
 
     for r in recs:
         st.success(" ".join(f"{x:02d}" for x in r))
 
-    st.markdown("## 💰 四合分析")
+    st.markdown("## 💰 四合策略")
 
     for r in recs:
 
