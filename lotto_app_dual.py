@@ -3,9 +3,7 @@ import streamlit as st
 import requests
 import re
 from bs4 import BeautifulSoup
-from collections import Counter
-import json
-import os
+from collections import Counter, defaultdict
 
 # ==============================
 # 抓資料
@@ -44,36 +42,19 @@ def fetch_history():
 
 
 # ==============================
-# 尾數學習（V42核心）
-# ==============================
-def learn_tail_distribution(history):
-
-    recent = history[-100:]
-    tails = [n%10 for d in recent for n in d]
-    counter = Counter(tails)
-
-    total = sum(counter.values())
-
-    prob = {t: counter[t]/total for t in range(10)}
-
-    return prob
-
-
-# ==============================
-# 分數模型（動態）
+# 評分模型（簡化穩定版）
 # ==============================
 def score_numbers(history):
 
-    freq120=Counter([n for d in history[-120:] for n in d])
-    freq30=Counter([n for d in history[-30:] for n in d])
-    recent5=Counter([n for d in history[-5:] for n in d])
+    freq100=Counter([n for d in history[-100:] for n in d])
+    recent10=Counter([n for d in history[-10:] for n in d])
 
     score={}
 
     for n in range(1,40):
 
-        hot=freq120[n]/120
-        trend=freq30[n]/30
+        hot=freq100[n]/100
+        trend=recent10[n]/10
 
         last_seen=50
         for i,d in enumerate(reversed(history)):
@@ -81,78 +62,59 @@ def score_numbers(history):
                 last_seen=i
                 break
 
-        cold=min(last_seen/40,1)
-        cold_boost = 0.3 if last_seen>20 else 0
-        recent_boost = recent5[n]*0.3  # 提高影響力
+        cold=min(last_seen/30,1)
 
-        score[n]=(
-            hot*0.3 +
-            trend*0.2 +
-            cold*0.2 +
-            cold_boost +
-            recent_boost
-        )
+        score[n]=hot*0.4 + trend*0.3 + cold*0.3
 
     return score
 
 
 # ==============================
-# 分佈限制（升級版）
+# 分佈限制
 # ==============================
 def valid_combo(combo):
 
-    # 連號限制
-    pair_count=sum(1 for i in range(4) if combo[i+1]-combo[i]==1)
-    if pair_count>=3:
-        return False
+    combo=sorted(combo)
 
     # 奇偶
-    odd=sum(1 for n in combo if n%2==1)
-    if not (odd==2 or odd==3):
+    odd=sum(1 for n in combo if n%2)
+    if odd not in [2,3]:
         return False
 
     # 區間
-    zone1=sum(1 for n in combo if 1<=n<=13)
-    zone2=sum(1 for n in combo if 14<=n<=26)
-    zone3=sum(1 for n in combo if 27<=n<=39)
-
-    if min(zone1,zone2,zone3)==0:
-        return False
+    if not any(n<=13 for n in combo): return False
+    if not any(14<=n<=26 for n in combo): return False
+    if not any(n>=27 for n in combo): return False
 
     # 和值
-    s=sum(combo)
-    if not (80<=s<=140):
+    if not (80<=sum(combo)<=140):
+        return False
+
+    # 尾數分散
+    tails=len(set(n%10 for n in combo))
+    if tails<3:
         return False
 
     return True
 
 
 # ==============================
-# AI推薦（進化版）
+# AI推薦
 # ==============================
 def ai_recommend(history):
 
     score=score_numbers(history)
-    tail_prob=learn_tail_distribution(history)
-    last_draw=history[-1]
 
     combos=set()
 
-    for _ in range(150000):
+    for _ in range(100000):
 
         combo=random.sample(range(1,40),5)
-
-        if random.random()<0.7:
-            combo=[n for n in combo if n not in last_draw]
-
-        while len(combo)<5:
-            combo=list(set(combo+[random.randint(1,39)]))
-
-        combo=tuple(sorted(combo))
 
         if not valid_combo(combo):
             continue
 
+        combo=tuple(sorted(combo))
         combos.add(combo)
 
     combos=list(combos)
@@ -160,42 +122,64 @@ def ai_recommend(history):
     scored=[]
 
     for c in combos:
-
-        base=sum(score[n] for n in c)
-
-        # 尾數評分（學習）
-        tail_score=sum(tail_prob[n%10] for n in c)
-
-        # 連號評分
-        pair_count=sum(1 for i in range(4) if c[i+1]-c[i]==1)
-
-        if pair_count==1:
-            pair_bonus=0.4
-        elif pair_count==2:
-            pair_bonus=0.2
-        else:
-            pair_bonus=0
-
-        final_score=base + tail_score + pair_bonus
-
-        scored.append((c,final_score))
+        s=sum(score[n] for n in c)
+        scored.append((c,s))
 
     scored=sorted(scored,key=lambda x:x[1],reverse=True)
 
-    top_pool=scored[:50]
-    picks=random.sample(top_pool,3)
+    picks=random.sample(scored[:30],3)
 
-    top3=[list(c) for c,_ in picks]
-    top10=[list(c) for c,_ in scored[:10]]
+    return [list(c) for c,_ in picks]
 
-    return top3,top10
+
+# ==============================
+# 拆四合（核心🔥）
+# ==============================
+def generate_four_sets(combo):
+    from itertools import combinations
+    return list(combinations(combo,4))
+
+
+# ==============================
+# 命中分析
+# ==============================
+def analyze_hits(four_sets, history):
+
+    result=[]
+
+    for fs in four_sets:
+
+        hit3=0
+        hit4=0
+
+        for draw in history[-3000:]:
+            match=len(set(fs)&set(draw))
+
+            if match==3:
+                hit3+=1
+            elif match==4:
+                hit4+=1
+
+        recent_hit=sum(
+            1 for draw in history[-5:]
+            if len(set(fs)&set(draw))>=3
+        )
+
+        result.append({
+            "set":fs,
+            "hit3":hit3,
+            "hit4":hit4,
+            "recent":recent_hit
+        })
+
+    return sorted(result,key=lambda x:(x["hit4"],x["hit3"],x["recent"]),reverse=True)
 
 
 # ==============================
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI 預測 V42 Evolution")
+st.title("🔥 539 AI + 四合策略引擎 V43")
 
 history=fetch_history()
 
@@ -210,22 +194,29 @@ for i,d in enumerate(history[-5:][::-1]):
 
 
 # 執行
-if st.button("🚀 AI開始預測"):
+if st.button("🚀 產生策略"):
 
-    top3,top10=ai_recommend(history)
-
-    st.divider()
-
-    st.markdown("### 🎯 AI推薦（V42自我學習）")
-
-    cols=st.columns(3)
-
-    for i,r in enumerate(top3):
-        with cols[i]:
-            st.success(" ".join(f"{x:02d}" for x in r))
+    recs=ai_recommend(history)
 
     st.divider()
+    st.markdown("## 🎯 AI推薦號碼")
 
-    with st.expander("📊 Top10參考"):
-        for r in top10:
-            st.write(" ".join(f"{x:02d}" for x in r))
+    for r in recs:
+        st.success(" ".join(f"{x:02d}" for x in r))
+
+    st.divider()
+    st.markdown("## 💰 四合最佳策略")
+
+    for r in recs:
+
+        st.markdown(f"### 🔹 來源組：{' '.join(f'{x:02d}' for x in r)}")
+
+        four_sets=generate_four_sets(r)
+        analysis=analyze_hits(four_sets,history)
+
+        for a in analysis[:3]:
+            st.write(
+                f"{' '.join(f'{x:02d}' for x in a['set'])} ｜ "
+                f"中3:{a['hit3']}次 ｜ 中4:{a['hit4']}次 ｜ "
+                f"近5期:{a['recent']}"
+            )
