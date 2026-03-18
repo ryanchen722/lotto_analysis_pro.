@@ -1,6 +1,7 @@
 import random
 import streamlit as st
 import requests
+import re
 import os
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -14,43 +15,36 @@ CSV_PATH = "539_history.csv"
 MAX_HISTORY = 1700
 
 # ==============================
-# 抓最新資料（修正版🔥）
+# 抓資料（回歸正確版本🔥）
 # ==============================
-def fetch_latest():
+def fetch_latest_pages(pages=3):
     headers = {"User-Agent": "Mozilla/5.0"}
-    url = "https://www.pilio.idv.tw/lto539/list.asp?indexpage=1"
+    all_data = []
 
-    r = requests.get(url, headers=headers, timeout=10)
-    r.encoding = "big5"
-    soup = BeautifulSoup(r.text, "lxml")
+    for p in range(1, pages+1):
+        url = f"https://www.pilio.idv.tw/lto539/list.asp?indexpage={p}"
 
-    rows = soup.find_all("tr")
-    data = []
+        r = requests.get(url, headers=headers, timeout=10)
+        r.encoding = "big5"
 
-    for row in rows:
-        tds = row.find_all("td")
+        soup = BeautifulSoup(r.text, "lxml")
+        rows = soup.find_all("tr")
 
-        if len(tds) < 7:
-            continue
+        for row in rows:
+            nums = re.findall(r'\b\d{1,2}\b', row.text)
 
-        nums = []
+            # 🔥 關鍵修正：只保留1~39
+            nums = [int(x) for x in nums if 1 <= int(x) <= 39]
 
-        for td in tds:
-            txt = td.text.strip()
+            if len(nums) >= 5:
+                draw = sorted(nums[-5:])  # ← 核心：最後5個才是开奖号
+                all_data.append(draw)
 
-            if txt.isdigit():
-                n = int(txt)
-                if 1 <= n <= 39:
-                    nums.append(n)
-
-        if len(nums) == 5:
-            data.append(sorted(nums))
-
-    return data
+    return all_data
 
 
 # ==============================
-# 載入 + 增量更新CSV
+# 載入 + 增量更新
 # ==============================
 @st.cache_data(ttl=43200)
 def load_history():
@@ -61,17 +55,17 @@ def load_history():
     else:
         history = []
 
-    latest = fetch_latest()
+    latest = fetch_latest_pages()
 
-    # 合併 + 去重
     combined = history + latest
-    unique = []
 
+    # 去重
+    unique = []
     for d in combined:
         if d not in unique:
             unique.append(d)
 
-    # 清洗資料（防止污染🔥）
+    # 清洗資料
     cleaned = []
     for d in unique:
         if (
@@ -81,18 +75,20 @@ def load_history():
         ):
             cleaned.append(sorted([int(x) for x in d]))
 
-    # 保留最新1700期
+    # 🔥 重要：網站是新→舊，要轉成舊→新
+    cleaned = cleaned[::-1]
+
+    # 保留1700期
     cleaned = cleaned[-MAX_HISTORY:]
 
-    # 存CSV
-    df = pd.DataFrame(cleaned)
-    df.to_csv(CSV_PATH, index=False)
+    # 存檔
+    pd.DataFrame(cleaned).to_csv(CSV_PATH, index=False)
 
     return cleaned
 
 
 # ==============================
-# 評分模型（防固定🔥）
+# 評分模型
 # ==============================
 def score_numbers(history):
 
@@ -106,7 +102,7 @@ def score_numbers(history):
 
         base = short[n]*0.5 + mid[n]*0.3 + long[n]*0.2
 
-        # 冷號補償
+        # 冷號
         last_seen = 100
         for i, d in enumerate(reversed(history)):
             if n in d:
@@ -115,7 +111,6 @@ def score_numbers(history):
 
         cold = min(last_seen/50, 1)
 
-        # 隨機擾動（避免固定）
         noise = random.uniform(0, 0.3)
 
         score[n] = base + cold + noise
@@ -130,17 +125,14 @@ def valid_combo(c):
 
     c = sorted(c)
 
-    # 奇偶
     odd = sum(n % 2 for n in c)
     if odd not in [2, 3]:
         return False
 
-    # 區間
     if not any(n <= 13 for n in c): return False
     if not any(14 <= n <= 26 for n in c): return False
     if not any(n >= 27 for n in c): return False
 
-    # 和值
     if not (80 <= sum(c) <= 140):
         return False
 
@@ -168,7 +160,6 @@ def ai_recommend(history):
     scored = [(c, sum(score[n] for n in c)) for c in combos]
     scored.sort(key=lambda x: x[1], reverse=True)
 
-    # 防止每次一樣
     picks = random.sample(scored[:25], 3)
 
     return [list(c) for c, _ in picks]
@@ -209,21 +200,21 @@ def analyze_hits(four_sets, history):
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI 四合策略 V45（穩定版）")
+st.title("🔥 539 AI 四合策略 V45.1（穩定回歸版）")
 
 history = load_history()
 
-st.markdown(f"### 📊 資料：{len(history)}期（已優化）")
+st.markdown(f"### 📊 資料：{len(history)}期")
 
-# 最新5期
+# 最新五期
 st.markdown("### 📅 最新五期")
 cols = st.columns(5)
 
 for i, d in enumerate(history[-5:][::-1]):
     cols[i].metric(f"第{i+1}期", " ".join(f"{x:02d}" for x in d))
 
-# Debug（可關掉）
-with st.expander("🔍 檢查資料"):
+# Debug
+with st.expander("🔍 資料檢查"):
     st.write(history[-10:])
 
 # 按鈕
