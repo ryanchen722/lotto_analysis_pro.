@@ -3,17 +3,19 @@ import streamlit as st
 import requests
 import re
 import os
+import json
 import pandas as pd
 from bs4 import BeautifulSoup
 from collections import Counter
 from itertools import combinations
 
 CSV_PATH = "539_history.csv"
+WEIGHT_PATH = "weights.json"
 MAX_HISTORY = 1770
 
 
 # ==============================
-# 🔥 抓資料（修正順序版）
+# 抓資料（保持你原本方式🔥）
 # ==============================
 def fetch_all_history(target=1770):
 
@@ -45,8 +47,7 @@ def fetch_all_history(target=1770):
         all_data.extend(page_data)
         page += 1
 
-    # 🔥 修正順序（舊 → 新）
-    return all_data[:target][::-1]
+    return all_data[:target][::-1]  # 🔥順序修正
 
 
 # ==============================
@@ -75,59 +76,68 @@ def cond_tail(d):
 
 
 # ==============================
-# 事件分析
-# ==============================
-def analyze_event(history, func):
-
-    events = []
-    gaps = []
-    last = None
-
-    for i, d in enumerate(history):
-        if func(d):
-
-            events.append(i)
-
-            if last is not None:
-                gaps.append(i - last)
-
-            last = i
-
-    prob = len(events) / len(history)
-    avg_gap = sum(gaps) / len(gaps) if gaps else 0
-    current_gap = len(history) - 1 - last if last else 0
-
-    return prob, avg_gap, current_gap
-
-
-# ==============================
-# 🔥 命中率回測（核心）
+# 回測
 # ==============================
 def backtest_event(history, trigger_func, result_func):
 
     success = 0
     total = 0
 
-    for i in range(len(history) - 1):
-
+    for i in range(len(history)-1):
         if trigger_func(history[i]):
-
             total += 1
-
-            # 看下一期
             if result_func(history[i+1]):
                 success += 1
 
-    if total == 0:
-        return 0
-
-    return success / total
+    return success/total if total else 0
 
 
 # ==============================
-# 評分模型
+# 🔥 權重系統（自學習）
 # ==============================
-def score_numbers(history, signals):
+def calculate_weights(history):
+
+    weights = {}
+
+    def calc(trigger):
+        rate = backtest_event(history, trigger, trigger)
+        return (rate - 0.5) * 2
+
+    weights["extreme"] = calc(cond_extreme)
+    weights["big"] = calc(cond_big)
+    weights["tail"] = calc(cond_tail)
+
+    return weights
+
+
+def load_weights(history):
+
+    if os.path.exists(WEIGHT_PATH):
+        with open(WEIGHT_PATH, "r") as f:
+            return json.load(f)
+
+    weights = calculate_weights(history)
+
+    with open(WEIGHT_PATH, "w") as f:
+        json.dump(weights, f)
+
+    return weights
+
+
+def update_weights(history):
+
+    weights = calculate_weights(history)
+
+    with open(WEIGHT_PATH, "w") as f:
+        json.dump(weights, f)
+
+    return weights
+
+
+# ==============================
+# 評分模型（AI核心🔥）
+# ==============================
+def score_numbers(history, signals, weights):
 
     short = Counter([n for d in history[-30:] for n in d])
     mid = Counter([n for d in history[-100:] for n in d])
@@ -149,14 +159,14 @@ def score_numbers(history, signals):
 
         bonus = 0
 
-        if signals["extreme"] and n >= 21:
-            bonus += 1.5
+        if signals["extreme"]:
+            bonus += weights["extreme"] * (1 if n >= 21 else -0.3)
 
-        if signals["big"] and n >= 20:
-            bonus += 1.0
+        if signals["big"]:
+            bonus += weights["big"] * (1 if n >= 20 else -0.3)
 
-        if signals["tail"] and n % 10 in [0,1,2,3]:
-            bonus += 0.8
+        if signals["tail"]:
+            bonus += weights["tail"] * (1 if n % 10 in [0,1,2,3] else -0.2)
 
         noise = random.uniform(0, 0.3)
 
@@ -179,9 +189,9 @@ def valid_combo(c):
     return True
 
 
-def ai_recommend(history, signals):
+def ai_recommend(history, signals, weights):
 
-    score = score_numbers(history, signals)
+    score = score_numbers(history, signals, weights)
 
     combos = set()
 
@@ -205,59 +215,42 @@ def ai_recommend(history, signals):
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI V52（回測驗證版）")
+st.title("🔥 539 AI V53（自我學習系統）")
 
-# 重抓
+# 🔄 重抓資料
 if st.button("🔄 重抓1770期"):
     st.cache_data.clear()
+    if os.path.exists(CSV_PATH):
+        os.remove(CSV_PATH)
     st.rerun()
 
 history = load_history()
+weights = load_weights(history)
 
 st.write("📊 期數:", len(history))
 
 
 # ==============================
-# 事件
+# 事件狀態
 # ==============================
-event_map = {
-    "極端小號": cond_extreme,
-    "全大號": cond_big,
-    "連號爆發": cond_consecutive,
-    "尾數集中": cond_tail
-}
-
-signals = {}
-
-st.markdown("## 🧠 市場狀態 + 命中率")
-
-cols = st.columns(4)
-
-for i, (name, func) in enumerate(event_map.items()):
-
-    prob, avg_gap, current = analyze_event(history, func)
-
-    # 🔥 回測
-    hit_rate = backtest_event(history, func, func)
-
-    with cols[i]:
-        st.metric(name, f"{prob*100:.1f}%")
-        st.write(f"命中率：{hit_rate*100:.1f}%")
-
-        if avg_gap > 0 and current >= avg_gap * 0.9:
-            st.error("🔥 接近爆發")
-            signals[name] = True
-        else:
-            st.success("正常")
-            signals[name] = False
-
-
-# 轉key
 signals = {
-    "extreme": signals["極端小號"],
-    "big": signals["全大號"],
-    "tail": signals["尾數集中"]
+    "extreme": cond_extreme(history[-1]),
+    "big": cond_big(history[-1]),
+    "tail": cond_tail(history[-1])
 }
+
+st.markdown("## 🧠 AI權重（自動學習）")
+
+c1, c2, c3 = st.columns(3)
+c1.metric("極端權重", f"{weights['extreme']:.2f}")
+c2.metric("全大權重", f"{weights['big']:.2f}")
+c3.metric("尾數權重", f"{weights['tail']:.2f}")
+
+
+# 更新權重
+if st.button("🧠 重新學習權重"):
+    weights = update_weights(history)
+    st.success("已更新AI權重")
 
 
 # 最新五期
@@ -271,7 +264,7 @@ for i, d in enumerate(history[-5:][::-1]):
 # AI預測
 if st.button("🚀 AI預測"):
 
-    recs = ai_recommend(history, signals)
+    recs = ai_recommend(history, signals, weights)
 
     st.markdown("## 🎯 AI推薦")
 
