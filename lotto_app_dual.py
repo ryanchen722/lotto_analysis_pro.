@@ -1,6 +1,7 @@
 import random
 import streamlit as st
 import requests
+import re
 import os
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -12,7 +13,7 @@ MAX_HISTORY = 1700
 
 
 # ==============================
-# 抓資料
+# 🔥 回到最穩抓法（你原本那版）
 # ==============================
 def fetch_latest_pages(pages=3):
 
@@ -26,23 +27,18 @@ def fetch_latest_pages(pages=3):
         r.encoding = "big5"
 
         soup = BeautifulSoup(r.text, "lxml")
+        rows = soup.find_all("tr")
 
-        balls = soup.find_all("font")
+        for row in rows:
+            nums = re.findall(r'\b\d{1,2}\b', row.text)
 
-        temp = []
+            # 🔥 過濾合法球號
+            nums = [int(x) for x in nums if 1 <= int(x) <= 39]
 
-        for b in balls:
-            txt = b.text.strip()
-
-            if txt.isdigit():
-                n = int(txt)
-
-                if 1 <= n <= 39:
-                    temp.append(n)
-
-                    if len(temp) == 5:
-                        all_data.append(sorted(temp))
-                        temp = []
+            # 🔥 最後5個才是开奖号（核心）
+            if len(nums) >= 5:
+                draw = sorted(nums[-5:])
+                all_data.append(draw)
 
     return all_data
 
@@ -60,7 +56,7 @@ def validate_data(history):
 
 
 # ==============================
-# 載入資料（3小時快取🔥）
+# 載入資料（3小時快取）
 # ==============================
 @st.cache_data(ttl=10800)
 def load_history():
@@ -72,7 +68,6 @@ def load_history():
         history = []
 
     latest = fetch_latest_pages()
-
     combined = history + latest
 
     unique = []
@@ -80,7 +75,9 @@ def load_history():
         if d not in unique:
             unique.append(d)
 
+    # 🔥 轉成舊→新
     unique = unique[::-1]
+
     unique = unique[-MAX_HISTORY:]
 
     pd.DataFrame(unique).to_csv(CSV_PATH, index=False)
@@ -89,28 +86,27 @@ def load_history():
 
 
 # ==============================
-# 極端分析
+# 極端事件分析
 # ==============================
 def extreme_analysis(history):
 
     events = []
     gaps = []
-    last_index = None
+    last = None
 
     for i, d in enumerate(history):
-
         if min(d) >= 21:
 
             events.append(i)
 
-            if last_index is not None:
-                gaps.append(i - last_index)
+            if last is not None:
+                gaps.append(i - last)
 
-            last_index = i
+            last = i
 
-    prob = len(events) / len(history) if history else 0
+    prob = len(events)/len(history) if history else 0
     avg_gap = sum(gaps)/len(gaps) if gaps else 0
-    current_gap = len(history) - 1 - last_index if last_index is not None else 0
+    current_gap = len(history)-1-last if last is not None else 0
 
     return prob, avg_gap, current_gap
 
@@ -118,7 +114,7 @@ def extreme_analysis(history):
 # ==============================
 # 評分模型
 # ==============================
-def score_numbers(history, boost_extreme=False):
+def score_numbers(history, boost=False):
 
     short = Counter([n for d in history[-30:] for n in d])
     mid = Counter([n for d in history[-100:] for n in d])
@@ -138,7 +134,7 @@ def score_numbers(history, boost_extreme=False):
 
         cold = min(last_seen/50, 1)
 
-        bonus = 1.5 if (boost_extreme and n >= 21) else 0
+        bonus = 1.5 if (boost and n >= 21) else 0
         noise = random.uniform(0, 0.3)
 
         score[n] = base + cold + bonus + noise
@@ -160,14 +156,13 @@ def valid_combo(c):
     return True
 
 
-def ai_recommend(history, boost_extreme=False):
+def ai_recommend(history, boost=False):
 
-    score = score_numbers(history, boost_extreme)
+    score = score_numbers(history, boost)
 
     combos = set()
 
     for _ in range(80000):
-
         c = random.sample(range(1, 40), 5)
 
         if valid_combo(c):
@@ -218,14 +213,14 @@ def analyze_hits(four_sets, history):
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI V49（即時更新版）")
+st.title("🔥 539 AI V49（穩定版）")
 
-# 🔄 強制更新按鈕🔥
+# 🔄 強制更新
 if st.button("🔄 立即重抓資料"):
     st.cache_data.clear()
     if os.path.exists(CSV_PATH):
         os.remove(CSV_PATH)
-    st.success("已清除快取並重新抓取！")
+    st.success("已重抓資料")
     st.rerun()
 
 
@@ -237,6 +232,8 @@ if not validate_data(history):
 else:
     st.success("🟢 資料正常")
 
+# 顯示資料量
+st.write("📊 資料筆數:", len(history))
 
 # 極端分析
 prob, avg_gap, current_gap = extreme_analysis(history)
@@ -259,11 +256,12 @@ else:
 # 最新五期
 st.markdown("### 📅 最新五期")
 cols = st.columns(5)
+
 for i, d in enumerate(history[-5:][::-1]):
     cols[i].metric(f"第{i+1}期", " ".join(f"{x:02d}" for x in d))
 
 
-# AI預測
+# 預測
 if st.button("🚀 AI預測"):
 
     recs = ai_recommend(history, boost)
