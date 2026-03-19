@@ -12,7 +12,7 @@ MAX_HISTORY = 1700
 
 
 # ==============================
-# 抓資料（穩定）
+# 抓資料
 # ==============================
 def fetch_latest_pages(pages=3):
 
@@ -60,9 +60,9 @@ def validate_data(history):
 
 
 # ==============================
-# 載入資料
+# 載入資料（3小時快取🔥）
 # ==============================
-@st.cache_data(ttl=43200)
+@st.cache_data(ttl=10800)
 def load_history():
 
     if os.path.exists(CSV_PATH):
@@ -72,6 +72,7 @@ def load_history():
         history = []
 
     latest = fetch_latest_pages()
+
     combined = history + latest
 
     unique = []
@@ -88,7 +89,7 @@ def load_history():
 
 
 # ==============================
-# 🔥 極端事件分析
+# 極端分析
 # ==============================
 def extreme_analysis(history):
 
@@ -98,7 +99,6 @@ def extreme_analysis(history):
 
     for i, d in enumerate(history):
 
-        # 👉 極端條件：最小號 >= 21
         if min(d) >= 21:
 
             events.append(i)
@@ -110,15 +110,13 @@ def extreme_analysis(history):
 
     prob = len(events) / len(history) if history else 0
     avg_gap = sum(gaps)/len(gaps) if gaps else 0
-
-    # 現在距離上次
     current_gap = len(history) - 1 - last_index if last_index is not None else 0
 
     return prob, avg_gap, current_gap
 
 
 # ==============================
-# 評分模型（加入極端判斷🔥）
+# 評分模型
 # ==============================
 def score_numbers(history, boost_extreme=False):
 
@@ -140,15 +138,10 @@ def score_numbers(history, boost_extreme=False):
 
         cold = min(last_seen/50, 1)
 
-        # 🔥 如果要爆冷 → 加強大號
-        if boost_extreme and n >= 21:
-            bonus = 1.5
-        else:
-            bonus = 0
-
+        bonus = 1.5 if (boost_extreme and n >= 21) else 0
         noise = random.uniform(0, 0.3)
 
-        score[n] = base + cold + noise + bonus
+        score[n] = base + cold + bonus + noise
 
     return score
 
@@ -225,33 +218,41 @@ def analyze_hits(four_sets, history):
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI V48（極端事件判斷版）")
+st.title("🔥 539 AI V49（即時更新版）")
+
+# 🔄 強制更新按鈕🔥
+if st.button("🔄 立即重抓資料"):
+    st.cache_data.clear()
+    if os.path.exists(CSV_PATH):
+        os.remove(CSV_PATH)
+    st.success("已清除快取並重新抓取！")
+    st.rerun()
+
 
 history = load_history()
 
 if not validate_data(history):
     st.error("❌ 資料錯誤")
     st.stop()
+else:
+    st.success("🟢 資料正常")
 
-# ==============================
-# 極端分析顯示🔥
-# ==============================
+
+# 極端分析
 prob, avg_gap, current_gap = extreme_analysis(history)
 
-st.markdown("## 🧠 極端事件分析（最小號 ≥ 21）")
+st.markdown("## 🧠 極端事件（最小號 ≥ 21）")
 
-col1, col2, col3 = st.columns(3)
+c1, c2, c3 = st.columns(3)
+c1.metric("機率", f"{prob*100:.2f}%")
+c2.metric("平均間隔", f"{avg_gap:.1f}")
+c3.metric("目前間隔", f"{current_gap}")
 
-col1.metric("發生機率", f"{prob*100:.2f}%")
-col2.metric("平均間隔", f"{avg_gap:.1f}期")
-col3.metric("目前間隔", f"{current_gap}期")
-
-# 判斷狀態
 if avg_gap > 0 and current_gap >= avg_gap * 0.9:
-    st.error("🔴 高機率區（可能快出現）")
+    st.error("🔴 高機率區")
     boost = True
 else:
-    st.success("🟢 正常區")
+    st.success("🟢 正常")
     boost = False
 
 
@@ -262,9 +263,7 @@ for i, d in enumerate(history[-5:][::-1]):
     cols[i].metric(f"第{i+1}期", " ".join(f"{x:02d}" for x in d))
 
 
-# ==============================
-# 預測
-# ==============================
+# AI預測
 if st.button("🚀 AI預測"):
 
     recs = ai_recommend(history, boost)
