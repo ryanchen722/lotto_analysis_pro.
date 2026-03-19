@@ -13,7 +13,7 @@ MAX_HISTORY = 1770
 
 
 # ==============================
-# 抓資料（自動翻頁）
+# 🔥 抓資料（修正順序版）
 # ==============================
 def fetch_all_history(target=1770):
 
@@ -45,7 +45,8 @@ def fetch_all_history(target=1770):
         all_data.extend(page_data)
         page += 1
 
-    return all_data[:target]
+    # 🔥 修正順序（舊 → 新）
+    return all_data[:target][::-1]
 
 
 # ==============================
@@ -59,16 +60,31 @@ def load_history():
 
 
 # ==============================
-# 🔥 多事件分析
+# 事件條件
 # ==============================
-def analyze_event(history, check_func):
+def cond_extreme(d): return min(d) >= 21
+def cond_big(d): return min(d) >= 20
+
+def cond_consecutive(d):
+    d = sorted(d)
+    return any(d[i]+1==d[i+1] and d[i]+2==d[i+2] for i in range(3))
+
+def cond_tail(d):
+    tails = [n % 10 for n in d]
+    return max(Counter(tails).values()) >= 3
+
+
+# ==============================
+# 事件分析
+# ==============================
+def analyze_event(history, func):
 
     events = []
     gaps = []
     last = None
 
     for i, d in enumerate(history):
-        if check_func(d):
+        if func(d):
 
             events.append(i)
 
@@ -77,26 +93,39 @@ def analyze_event(history, check_func):
 
             last = i
 
-    prob = len(events)/len(history) if history else 0
-    avg_gap = sum(gaps)/len(gaps) if gaps else 0
-    current_gap = len(history)-1-last if last is not None else 0
+    prob = len(events) / len(history)
+    avg_gap = sum(gaps) / len(gaps) if gaps else 0
+    current_gap = len(history) - 1 - last if last else 0
 
     return prob, avg_gap, current_gap
 
 
-# 各種事件
-def cond_extreme(d): return min(d) >= 21
-def cond_big(d): return min(d) >= 20
-def cond_consecutive(d):
-    d = sorted(d)
-    return any(d[i]+1==d[i+1] and d[i]+2==d[i+2] for i in range(3))
-def cond_tail(d):
-    tails = [n%10 for n in d]
-    return max(Counter(tails).values()) >= 3
+# ==============================
+# 🔥 命中率回測（核心）
+# ==============================
+def backtest_event(history, trigger_func, result_func):
+
+    success = 0
+    total = 0
+
+    for i in range(len(history) - 1):
+
+        if trigger_func(history[i]):
+
+            total += 1
+
+            # 看下一期
+            if result_func(history[i+1]):
+                success += 1
+
+    if total == 0:
+        return 0
+
+    return success / total
 
 
 # ==============================
-# 評分模型（多事件🔥）
+# 評分模型
 # ==============================
 def score_numbers(history, signals):
 
@@ -120,7 +149,6 @@ def score_numbers(history, signals):
 
         bonus = 0
 
-        # 🔥 根據事件加權
         if signals["extreme"] and n >= 21:
             bonus += 1.5
 
@@ -177,10 +205,10 @@ def ai_recommend(history, signals):
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI V51（多事件判斷系統）")
+st.title("🔥 539 AI V52（回測驗證版）")
 
 # 重抓
-if st.button("🔄 重新抓1770期"):
+if st.button("🔄 重抓1770期"):
     st.cache_data.clear()
     st.rerun()
 
@@ -190,10 +218,10 @@ st.write("📊 期數:", len(history))
 
 
 # ==============================
-# 事件分析顯示
+# 事件
 # ==============================
-events = {
-    "極端小號消失": cond_extreme,
+event_map = {
+    "極端小號": cond_extreme,
     "全大號": cond_big,
     "連號爆發": cond_consecutive,
     "尾數集中": cond_tail
@@ -201,41 +229,46 @@ events = {
 
 signals = {}
 
-st.markdown("## 🧠 市場狀態")
+st.markdown("## 🧠 市場狀態 + 命中率")
 
 cols = st.columns(4)
 
-for i, (name, func) in enumerate(events.items()):
+for i, (name, func) in enumerate(event_map.items()):
 
     prob, avg_gap, current = analyze_event(history, func)
 
+    # 🔥 回測
+    hit_rate = backtest_event(history, func, func)
+
     with cols[i]:
         st.metric(name, f"{prob*100:.1f}%")
+        st.write(f"命中率：{hit_rate*100:.1f}%")
 
         if avg_gap > 0 and current >= avg_gap * 0.9:
-            st.error("🔥 可能爆發")
-            signals[name.split("號")[0]] = True
+            st.error("🔥 接近爆發")
+            signals[name] = True
         else:
             st.success("正常")
-            signals[name.split("號")[0]] = False
+            signals[name] = False
 
 
-# 統一key
+# 轉key
 signals = {
-    "extreme": signals.get("極端小", False),
-    "big": signals.get("全大", False),
-    "tail": signals.get("尾數", False)
+    "extreme": signals["極端小號"],
+    "big": signals["全大號"],
+    "tail": signals["尾數集中"]
 }
 
 
 # 最新五期
 st.markdown("### 📅 最新五期")
 cols = st.columns(5)
+
 for i, d in enumerate(history[-5:][::-1]):
     cols[i].metric(f"{i+1}", " ".join(f"{x:02d}" for x in d))
 
 
-# 預測
+# AI預測
 if st.button("🚀 AI預測"):
 
     recs = ai_recommend(history, signals)
