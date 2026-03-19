@@ -9,93 +9,66 @@ from collections import Counter
 from itertools import combinations
 
 CSV_PATH = "539_history.csv"
-MAX_HISTORY = 1700
+MAX_HISTORY = 1770
 
 
 # ==============================
-# 🔥 回到最穩抓法（你原本那版）
+# 抓資料（自動翻頁）
 # ==============================
-def fetch_latest_pages(pages=3):
+def fetch_all_history(target=1770):
 
     headers = {"User-Agent": "Mozilla/5.0"}
     all_data = []
+    page = 1
 
-    for p in range(1, pages+1):
+    while len(all_data) < target:
 
-        url = f"https://www.pilio.idv.tw/lto539/list.asp?indexpage={p}"
+        url = f"https://www.pilio.idv.tw/lto539/list.asp?indexpage={page}"
         r = requests.get(url, headers=headers, timeout=10)
         r.encoding = "big5"
 
         soup = BeautifulSoup(r.text, "lxml")
         rows = soup.find_all("tr")
 
+        page_data = []
+
         for row in rows:
             nums = re.findall(r'\b\d{1,2}\b', row.text)
-
-            # 🔥 過濾合法球號
             nums = [int(x) for x in nums if 1 <= int(x) <= 39]
 
-            # 🔥 最後5個才是开奖号（核心）
             if len(nums) >= 5:
-                draw = sorted(nums[-5:])
-                all_data.append(draw)
+                page_data.append(sorted(nums[-5:]))
 
-    return all_data
+        if not page_data:
+            break
 
+        all_data.extend(page_data)
+        page += 1
 
-# ==============================
-# 驗證
-# ==============================
-def validate_data(history):
-    for d in history:
-        if len(d) != 5:
-            return False
-        if any(n < 1 or n > 39 for n in d):
-            return False
-    return True
+    return all_data[:target]
 
 
 # ==============================
-# 載入資料（3小時快取）
+# 快取
 # ==============================
 @st.cache_data(ttl=10800)
 def load_history():
-
-    if os.path.exists(CSV_PATH):
-        df = pd.read_csv(CSV_PATH)
-        history = df.values.tolist()
-    else:
-        history = []
-
-    latest = fetch_latest_pages()
-    combined = history + latest
-
-    unique = []
-    for d in combined:
-        if d not in unique:
-            unique.append(d)
-
-    # 🔥 轉成舊→新
-    unique = unique[::-1]
-
-    unique = unique[-MAX_HISTORY:]
-
-    pd.DataFrame(unique).to_csv(CSV_PATH, index=False)
-
-    return unique
+    data = fetch_all_history(MAX_HISTORY)
+    pd.DataFrame(data).to_csv(CSV_PATH, index=False)
+    return data
 
 
 # ==============================
-# 極端事件分析
+# 🔥 多事件分析
 # ==============================
-def extreme_analysis(history):
+def analyze_event(history, check_func):
 
     events = []
     gaps = []
     last = None
 
     for i, d in enumerate(history):
-        if min(d) >= 21:
+        if check_func(d):
 
             events.append(i)
 
@@ -111,10 +84,21 @@ def extreme_analysis(history):
     return prob, avg_gap, current_gap
 
 
+# 各種事件
+def cond_extreme(d): return min(d) >= 21
+def cond_big(d): return min(d) >= 20
+def cond_consecutive(d):
+    d = sorted(d)
+    return any(d[i]+1==d[i+1] and d[i]+2==d[i+2] for i in range(3))
+def cond_tail(d):
+    tails = [n%10 for n in d]
+    return max(Counter(tails).values()) >= 3
+
+
 # ==============================
-# 評分模型
+# 評分模型（多事件🔥）
 # ==============================
-def score_numbers(history, boost=False):
+def score_numbers(history, signals):
 
     short = Counter([n for d in history[-30:] for n in d])
     mid = Counter([n for d in history[-100:] for n in d])
@@ -134,7 +118,18 @@ def score_numbers(history, boost=False):
 
         cold = min(last_seen/50, 1)
 
-        bonus = 1.5 if (boost and n >= 21) else 0
+        bonus = 0
+
+        # 🔥 根據事件加權
+        if signals["extreme"] and n >= 21:
+            bonus += 1.5
+
+        if signals["big"] and n >= 20:
+            bonus += 1.0
+
+        if signals["tail"] and n % 10 in [0,1,2,3]:
+            bonus += 0.8
+
         noise = random.uniform(0, 0.3)
 
         score[n] = base + cold + bonus + noise
@@ -156,9 +151,9 @@ def valid_combo(c):
     return True
 
 
-def ai_recommend(history, boost=False):
+def ai_recommend(history, signals):
 
-    score = score_numbers(history, boost)
+    score = score_numbers(history, signals)
 
     combos = set()
 
@@ -179,108 +174,73 @@ def ai_recommend(history, boost=False):
 
 
 # ==============================
-# 四合
-# ==============================
-def generate_four_sets(combo):
-    return list(combinations(combo, 4))
-
-
-def analyze_hits(four_sets, history):
-
-    result = []
-
-    for fs in four_sets:
-
-        hit3 = 0
-        hit4 = 0
-
-        for d in history:
-            m = len(set(fs) & set(d))
-            if m == 3: hit3 += 1
-            elif m == 4: hit4 += 1
-
-        recent = sum(
-            1 for d in history[-5:]
-            if len(set(fs) & set(d)) >= 3
-        )
-
-        result.append((fs, hit3, hit4, recent))
-
-    return sorted(result, key=lambda x: (x[2], x[1], x[3]), reverse=True)
-
-
-# ==============================
 # UI
 # ==============================
 st.set_page_config(layout="wide")
-st.title("🔥 539 AI V49（穩定版）")
+st.title("🔥 539 AI V51（多事件判斷系統）")
 
-# 🔄 強制更新
-if st.button("🔄 立即重抓資料"):
+# 重抓
+if st.button("🔄 重新抓1770期"):
     st.cache_data.clear()
-    if os.path.exists(CSV_PATH):
-        os.remove(CSV_PATH)
-    st.success("已重抓資料")
     st.rerun()
-
 
 history = load_history()
 
-if not validate_data(history):
-    st.error("❌ 資料錯誤")
-    st.stop()
-else:
-    st.success("🟢 資料正常")
+st.write("📊 期數:", len(history))
 
-# 顯示資料量
-st.write("📊 資料筆數:", len(history))
 
-# 極端分析
-prob, avg_gap, current_gap = extreme_analysis(history)
+# ==============================
+# 事件分析顯示
+# ==============================
+events = {
+    "極端小號消失": cond_extreme,
+    "全大號": cond_big,
+    "連號爆發": cond_consecutive,
+    "尾數集中": cond_tail
+}
 
-st.markdown("## 🧠 極端事件（最小號 ≥ 21）")
+signals = {}
 
-c1, c2, c3 = st.columns(3)
-c1.metric("機率", f"{prob*100:.2f}%")
-c2.metric("平均間隔", f"{avg_gap:.1f}")
-c3.metric("目前間隔", f"{current_gap}")
+st.markdown("## 🧠 市場狀態")
 
-if avg_gap > 0 and current_gap >= avg_gap * 0.9:
-    st.error("🔴 高機率區")
-    boost = True
-else:
-    st.success("🟢 正常")
-    boost = False
+cols = st.columns(4)
+
+for i, (name, func) in enumerate(events.items()):
+
+    prob, avg_gap, current = analyze_event(history, func)
+
+    with cols[i]:
+        st.metric(name, f"{prob*100:.1f}%")
+
+        if avg_gap > 0 and current >= avg_gap * 0.9:
+            st.error("🔥 可能爆發")
+            signals[name.split("號")[0]] = True
+        else:
+            st.success("正常")
+            signals[name.split("號")[0]] = False
+
+
+# 統一key
+signals = {
+    "extreme": signals.get("極端小", False),
+    "big": signals.get("全大", False),
+    "tail": signals.get("尾數", False)
+}
 
 
 # 最新五期
 st.markdown("### 📅 最新五期")
 cols = st.columns(5)
-
 for i, d in enumerate(history[-5:][::-1]):
-    cols[i].metric(f"第{i+1}期", " ".join(f"{x:02d}" for x in d))
+    cols[i].metric(f"{i+1}", " ".join(f"{x:02d}" for x in d))
 
 
 # 預測
 if st.button("🚀 AI預測"):
 
-    recs = ai_recommend(history, boost)
+    recs = ai_recommend(history, signals)
 
     st.markdown("## 🎯 AI推薦")
 
     for r in recs:
         st.success(" ".join(f"{x:02d}" for x in r))
-
-    st.markdown("## 💰 四合策略")
-
-    for r in recs:
-
-        st.markdown(f"### {' '.join(map(str,r))}")
-
-        four_sets = generate_four_sets(r)
-        analysis = analyze_hits(four_sets, history)
-
-        for fs, h3, h4, recent in analysis[:3]:
-            st.write(
-                f"{fs} ｜ 中3:{h3} ｜ 中4:{h4} ｜ 近5:{recent}"
-            )
