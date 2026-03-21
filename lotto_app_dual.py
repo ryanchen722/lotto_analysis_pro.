@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from collections import Counter
 
 # --- 必須是 Streamlit 的第一個指令 ---
-st.set_page_config(page_title="539 AI V54.2 Pro", layout="wide")
+st.set_page_config(page_title="539 AI V54.4 Pro", layout="wide")
 
 # 嘗試匯入 Plotly
 try:
@@ -22,7 +22,9 @@ except ImportError:
 # ==============================
 # 數據抓取
 # ==============================
-def fetch_all_history(target=1770):
+@st.cache_data(ttl=10800)
+def load_history():
+    target = 1770
     headers = {"User-Agent": "Mozilla/5.0"}
     all_data = []
     page = 1
@@ -56,12 +58,8 @@ def fetch_all_history(target=1770):
     progress_bar.empty()
     return all_data[:target][::-1]
 
-@st.cache_data(ttl=10800)
-def load_history():
-    return fetch_all_history()
-
 # ==============================
-# 核心運算邏輯 (同前版本)
+# 運算邏輯
 # ==============================
 def cond_extreme(d): return min(d) >= 21
 def cond_big(d): return min(d) >= 20
@@ -119,20 +117,18 @@ def ai_recommend_prob(history, biases):
 # ==============================
 # UI 顯示介面
 # ==============================
-st.title("🎯 539 AI V54.2 智能熱區預測")
+st.title("🎯 539 AI V54.4 專業預測系統")
 
 history = load_history()
 biases = calculate_cross_weights(history)
 
-# --- 新增：最新五期資料 ---
+# --- 最新五期資料 ---
 st.subheader("📅 最新五期開獎紀錄")
 draw_cols = st.columns(5)
-# 取最後五期並反轉，讓最新的一期排在最左邊
 latest_five = history[-5:][::-1]
 for i, draw in enumerate(latest_five):
     with draw_cols[i]:
         st.markdown(f"**前 {i+1} 期**")
-        # 05, 23, 25, 30, 37 這種格式
         st.code(" ".join(f"{x:02d}" for x in draw))
 
 st.divider()
@@ -149,24 +145,33 @@ if HAS_PLOTLY:
                  color_discrete_map={"🔥 熱門": "#FF4B4B", "❄️ 冷門": "#1C83E1", "⚖️ 正常": "#00C496"})
     st.plotly_chart(fig, use_container_width=True)
 
-# --- 預測區塊 ---
+# --- 預測區塊 (修正重複號碼版本) ---
 st.divider()
 if st.button("🚀 啟動 AI 混合策略預測", use_container_width=True):
-    with st.spinner('正在分析數據規律...'):
+    with st.spinner('正在分析數據規律並確保號碼唯一性...'):
+        # 策略 1: 機率權重最佳化
         strategy_1 = ai_recommend_prob(history, biases)[0]
         
-        # 策略 2: 熱冷混合
+        # 策略 2: 熱冷混合 (修正版：使用 set 確保不重複)
         hot_list = heat_df[heat_df["狀態"] == "🔥 熱門"]["號碼"].tolist()
         cold_list = heat_df[heat_df["狀態"] == "❄️ 冷門"]["號碼"].tolist()
+        
+        s2_set = set()
         if len(hot_list) >= 2 and len(cold_list) >= 2:
-            s2 = sorted(random.sample(hot_list, 2) + random.sample(cold_list, 2) + [random.randint(1,39)])
+            for n in random.sample(hot_list, 2): s2_set.add(n)
+            for n in random.sample(cold_list, 2): s2_set.add(n)
+            while len(s2_set) < 5:
+                s2_set.add(random.randint(1, 39))
+            s2 = sorted(list(s2_set))
         else:
             s2 = ai_recommend_prob(history, biases)[1]
             
-        # 策略 3: 基於上一期 05,23,25,30,37 的區間修正
-        # 針對 10-22 這個大空檔進行補償
+        # 策略 3: 中段區間修正 (修正版：使用 set 確保不重複)
         mid_zone = [n for n in range(10, 23)]
-        s3 = sorted(random.sample(mid_zone, 3) + random.sample(range(1, 40), 2))
+        s3_set = set(random.sample(mid_zone, 3))
+        while len(s3_set) < 5:
+            s3_set.add(random.randint(1, 39))
+        s3 = sorted(list(s3_set))
 
     st.subheader("🎯 AI 推薦組合")
     res_cols = st.columns(3)
@@ -175,6 +180,6 @@ if st.button("🚀 啟動 AI 混合策略預測", use_container_width=True):
         res_cols[i].markdown(f"**{labels[i]}**")
         res_cols[i].success(f"### {' - '.join(f'{x:02d}' for x in r)}")
 
-if st.button("🔄 重整並同步歷史資料"):
+if st.button("🔄 同步歷史資料"):
     st.cache_data.clear()
     st.rerun()
