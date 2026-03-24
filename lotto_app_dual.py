@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from collections import Counter
 
 # --- 必須是 Streamlit 的第一個指令 ---
-st.set_page_config(page_title="539 AI V54.6 Pro", layout="wide")
+st.set_page_config(page_title="539 AI V54.7 Pro", layout="wide")
 
 # 嘗試匯入 Plotly
 try:
@@ -117,14 +117,13 @@ def ai_recommend_prob(history, biases):
 def get_health_label(combo):
     odd = sum(1 for n in combo if n % 2 != 0)
     big = sum(1 for n in combo if n >= 20)
-    # 理想比例 2:3 或 3:2
     is_balanced = (2 <= odd <= 3) and (2 <= big <= 3)
     return f"奇偶{odd}:{5-odd} | 大小{big}:{5-big} " + ("✅平衡" if is_balanced else "⚠️偏激")
 
 # ==============================
 # UI 顯示介面
 # ==============================
-st.title("🎯 539 AI V54.6 終極能量決策系統")
+st.title("🎯 539 AI V54.7 投資最大化決策系統")
 
 history = load_history()
 biases = calculate_cross_weights(history)
@@ -143,7 +142,7 @@ st.divider()
 # --- 熱度與尾數分析 ---
 col_charts = st.columns(2)
 with col_charts[0]:
-    st.subheader("📊 號碼熱度分析 (近 50 期)")
+    st.subheader("📊 號碼熱度分析")
     short_term = Counter([n for d in history[-50:] for n in d])
     heat_df = pd.DataFrame([{"號碼": n, "出現次數": short_term[n], 
                              "狀態": "🔥 熱門" if short_term[n] > 8 else ("❄️ 冷門" if short_term[n] < 4 else "⚖️ 正常")} 
@@ -154,23 +153,21 @@ with col_charts[0]:
         st.plotly_chart(fig_heat, use_container_width=True)
 
 with col_charts[1]:
-    st.subheader("🧬 尾數能量趨勢 (近 20 期)")
+    st.subheader("🧬 尾數能量趨勢")
     recent_20 = history[-20:]
     tail_counts = Counter([n % 10 for d in recent_20 for n in d])
     tail_df = pd.DataFrame([{"尾數": str(t), "能量點": tail_counts[t]} for t in range(10)])
     if HAS_PLOTLY:
-        fig_tail = px.line(tail_df, x="尾數", y="能量點", markers=True, 
-                           title="高峰=過熱應避開 / 低谷=能量回補點")
+        fig_tail = px.line(tail_df, x="尾數", y="能量點", markers=True)
         st.plotly_chart(fig_tail, use_container_width=True)
 
-# --- 預測區塊 ---
+# --- 預測區塊 (投資最大化) ---
 st.divider()
 if st.button("🚀 啟動 AI 混合策略預測", use_container_width=True):
-    with st.spinner('正在精算能量分佈與組合健康度...'):
-        # 1. 機率權重
+    with st.spinner('正在精算能量共鳴與組合健康度...'):
+        # 1. 原始三策略
         s1 = ai_recommend_prob(history, biases)[0]
         
-        # 2. 熱冷混合平衡
         hot_list = heat_df[heat_df["狀態"] == "🔥 熱門"]["號碼"].tolist()
         cold_list = heat_df[heat_df["狀態"] == "❄️ 冷門"]["號碼"].tolist()
         s2_set = set()
@@ -181,26 +178,55 @@ if st.button("🚀 啟動 AI 混合策略預測", use_container_width=True):
             s2 = sorted(list(s2_set))
         else: s2 = ai_recommend_prob(history, biases)[1]
             
-        # 3. 區間修正 (針對上一期的斷層補強)
         mid_zone = [n for n in range(10, 23)]
         s3_set = set(random.sample(mid_zone, 3))
         while len(s3_set) < 5: s3_set.add(random.randint(1, 39))
         s3 = sorted(list(s3_set))
 
-    st.subheader("🎯 AI 策略能量分析")
+        # --- 100 元最大化邏輯 (Consensus Strategy) ---
+        all_picks = s1 + s2 + s3
+        consensus_counts = Counter(all_picks)
+        # 找出出現 2 次以上的號碼作為「主支核心」
+        core_nums = [n for n, count in consensus_counts.items() if count >= 2]
+        
+        # 為了最大化利益，我們產出 2 組互補注碼
+        # 第一注：主支 + 策略一高分號
+        bet1_set = set(core_nums)
+        for n in s1:
+            if len(bet1_set) >= 5: break
+            bet1_set.add(n)
+        while len(bet1_set) < 5: bet1_set.add(random.randint(1,39))
+        bet1 = sorted(list(bet1_set))
+
+        # 第二注：主支 + 策略二/三平衡號
+        bet2_set = set(core_nums)
+        for n in (s2 + s3):
+            if len(bet2_set) >= 5: break
+            bet2_set.add(n)
+        while len(bet2_set) < 5: bet2_set.add(random.randint(1,39))
+        bet2 = sorted(list(bet2_set))
+
+    # --- UI 顯示 ---
+    st.subheader("💡 100 元黃金組合 (利益最大化推薦)")
+    st.info("邏輯：提取三種 AI 策略的「共鳴號碼」作為主支，並分散在兩組投注中，降低號碼分散風險。")
+    b_col1, b_col2 = st.columns(2)
+    with b_col1:
+        st.success(f"### 第 1 注：{' - '.join(f'{x:02d}' for x in bet1)}")
+        st.caption(get_health_label(bet1))
+    with b_col2:
+        st.success(f"### 第 2 注：{' - '.join(f'{x:02d}' for x in bet2)}")
+        st.caption(get_health_label(bet2))
+
+    st.divider()
+    st.subheader("🎯 原始 AI 策略參考")
     res_cols = st.columns(3)
     strategies = [s1, s2, s3]
     titles = ["🏆 機率權重", "⚖️ 能量平衡", "🛠 區間修正"]
-    captions = ["🧠 大數據統計最強推薦", "☯️ 冷熱調和，均值回歸", "🕳 填補近期真空號碼區"]
-    confidences = [0.95, 0.88, 0.82]
-    
     for i, combo in enumerate(strategies):
         with res_cols[i]:
-            st.markdown(f"### {titles[i]}")
-            st.success(f"**{' - '.join(f'{x:02d}' for x in combo)}**")
-            st.caption(captions[i])
-            st.code(get_health_label(combo))
-            st.progress(confidences[i])
+            st.markdown(f"#### {titles[i]}")
+            st.code(f"{' - '.join(f'{x:02d}' for x in combo)}")
+            st.progress([0.95, 0.88, 0.82][i])
 
 if st.button("🔄 同步歷史資料"):
     st.cache_data.clear()
