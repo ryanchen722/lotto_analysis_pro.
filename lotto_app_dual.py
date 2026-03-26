@@ -9,17 +9,13 @@ import os
 from bs4 import BeautifulSoup
 from collections import Counter
 
-# ====== 可選 AI（填入你的 API KEY）======
-USE_AI = False
-OPENAI_API_KEY = ""
-
-# ========================================
-st.set_page_config(page_title="539 AI V57 Hybrid", layout="wide")
+st.set_page_config(page_title="539 AI V58 穩定版", layout="wide")
 
 PERF_FILE = "performance.json"
+BET_FILE = "last_bet.json"
 
 # ==============================
-# 抓資料（穩定）
+# 抓資料
 # ==============================
 @st.cache_data(ttl=10800)
 def load_history():
@@ -34,6 +30,7 @@ def load_history():
             r = requests.get(url, headers=headers, timeout=10)
             r.encoding = "big5"
             soup = BeautifulSoup(r.text, "lxml")
+
             rows = soup.find_all("tr")
 
             page_data = []
@@ -55,6 +52,16 @@ def load_history():
 
     return all_data[:target][::-1]
 
+# ==============================
+# 工具
+# ==============================
+def load_json(file):
+    if os.path.exists(file):
+        return json.load(open(file))
+    return []
+
+def save_json(file,data):
+    json.dump(data, open(file,"w"), indent=2)
 
 # ==============================
 # 條件
@@ -62,18 +69,13 @@ def load_history():
 def cond_extreme(d): return min(d) >= 21
 def cond_big(d): return min(d) >= 20
 def cond_tail(d):
-    tails = [n % 10 for n in d]
-    return max(Counter(tails).values()) >= 3
-
+    return max(Counter([n%10 for n in d]).values()) >= 3
 
 # ==============================
-# 🔥 AI盤勢判斷（可接LLM）
+# 市場判斷
 # ==============================
 def ai_market_state(history):
-
-    last10 = history[-10:]
-    nums = [n for d in last10 for n in d]
-
+    nums = [n for d in history[-10:] for n in d]
     avg = np.mean(nums)
 
     if avg > 23:
@@ -83,15 +85,13 @@ def ai_market_state(history):
     else:
         return "均衡盤"
 
-
 # ==============================
-# 🔥 權重計算（時間衰減）
+# 權重
 # ==============================
 def calc_weights(history):
 
     bias = {k:{i:0 for i in range(1,40)} for k in ["extreme","big","tail"]}
     count = {"extreme":0,"big":0,"tail":0}
-
     total = len(history)
 
     for i in range(len(history)-1):
@@ -113,7 +113,6 @@ def calc_weights(history):
             for n in nxt: bias["tail"][n] += decay
 
     avg = 5/39
-
     for k in bias:
         if count[k] > 0:
             for n in range(1,40):
@@ -121,25 +120,20 @@ def calc_weights(history):
 
     return bias
 
-
 # ==============================
-# 🔥 評分（AI調整版）
+# 評分
 # ==============================
 def score_numbers(history, bias, market):
 
     short = Counter([n for d in history[-30:] for n in d])
-
     scores = {}
 
     for n in range(1,40):
 
         base = short[n]
-
         gap = next((i for i,d in enumerate(reversed(history)) if n in d),50)
-
         ai = sum(bias[k][n]*20 for k in bias)
 
-        # 🔥 AI市場調整
         if market == "熱盤":
             base *= 0.8
             gap *= 1.2
@@ -149,7 +143,6 @@ def score_numbers(history, bias, market):
         scores[n] = max(0.1, base + gap/20 + ai + random.uniform(0,0.3))
 
     return scores
-
 
 # ==============================
 # 選號
@@ -173,61 +166,14 @@ def pick_numbers(history, bias, market):
 
     return picks
 
-
 # ==============================
-# 投資績效
+# 投資組合
 # ==============================
-def load_perf():
-    if os.path.exists(PERF_FILE):
-        return json.load(open(PERF_FILE))
-    return []
+def build_bets(picks):
 
-def save_perf(data):
-    json.dump(data, open(PERF_FILE,"w"))
-
-def evaluate(bets, draw):
-    res = []
-    for b in bets:
-        hit = len(set(b) & set(draw))
-        res.append({"bet":b,"draw":draw,"hit":hit,"error":5-hit})
-    return res
-
-
-# ==============================
-# UI
-# ==============================
-st.title("🔥 539 AI V57（AI混合最終版）")
-
-history = load_history()
-bias = calc_weights(history)
-
-market = ai_market_state(history)
-
-st.write(f"📊 市場狀態：{market}")
-
-# 最新五期
-st.subheader("📅 最新五期")
-cols = st.columns(5)
-for i,d in enumerate(history[-5:][::-1]):
-    cols[i].code(" ".join(f"{x:02d}" for x in d))
-
-
-# 績效
-perf = load_perf()
-if perf:
-    df = pd.DataFrame(perf)
-    st.subheader("📊 投資績效")
-    st.dataframe(df.tail(20))
-    st.metric("平均命中", f"{df['hit'].mean():.2f}")
-
-
-# AI預測
-if st.button("🚀 AI預測"):
-
-    s1,s2,s3 = pick_numbers(history, bias, market)
-
-    all_nums = s1+s2+s3
+    all_nums = sum(picks, [])
     cnt = Counter(all_nums)
+
     core = [n for n,c in cnt.items() if c>=2]
 
     def build(base):
@@ -239,33 +185,100 @@ if st.button("🚀 AI預測"):
             s.add(random.randint(1,39))
         return sorted(s)
 
-    bet1 = build(s1)
-    bet2 = build(s2)
+    return build(picks[0]), build(picks[1])
 
-    st.subheader("💰 投資組合")
+# ==============================
+# 評估
+# ==============================
+def evaluate(bets, draw):
+    res = []
+    for b in bets:
+        hit = len(set(b) & set(draw))
+        res.append({
+            "下注": b,
+            "開獎": draw,
+            "命中": hit,
+            "誤差": 5-hit
+        })
+    return res
+
+# ==============================
+# UI
+# ==============================
+st.title("🔥 539 AI V58（穩定驗證版）")
+
+history = load_history()
+bias = calc_weights(history)
+market = ai_market_state(history)
+
+st.write(f"📊 市場狀態：{market}")
+st.write(f"📦 資料期數：{len(history)}")
+
+# 最新五期
+st.subheader("📅 最新五期")
+cols = st.columns(5)
+for i,d in enumerate(history[-5:][::-1]):
+    cols[i].code(" ".join(f"{x:02d}" for x in d))
+
+# ==============================
+# 產生預測
+# ==============================
+if st.button("🚀 產生 AI 投資組合"):
+
+    picks = pick_numbers(history, bias, market)
+    bet1, bet2 = build_bets(picks)
+
+    st.subheader("💰 本期投注")
     st.success(" ".join(map(str,bet1)))
     st.success(" ".join(map(str,bet2)))
 
-    st.session_state["last_bets"] = [bet1,bet2]
+    # 🔥 存下注（含期數）
+    save_json(BET_FILE, {
+        "bets":[bet1,bet2],
+        "index": len(history)
+    })
 
+# ==============================
+# 🔥 自動驗證（核心）
+# ==============================
+if os.path.exists(BET_FILE):
 
-# 自動比對
-if "last_bets" in st.session_state:
+    bet_data = load_json(BET_FILE)
 
-    draw = history[-1]
+    if bet_data:
 
-    res = evaluate(st.session_state["last_bets"], draw)
+        bet_index = bet_data["index"]
 
-    perf = load_perf()
-    perf.extend(res)
-    save_perf(perf)
+        if len(history) > bet_index:
 
-    del st.session_state["last_bets"]
+            next_draw = history[bet_index]
 
-    st.success("✅ 已更新績效")
+            result = evaluate(bet_data["bets"], next_draw)
 
+            perf = load_json(PERF_FILE)
+            perf.extend(result)
+            save_json(PERF_FILE, perf)
 
+            os.remove(BET_FILE)
+
+            st.success("✅ 已完成『下一期驗證』")
+
+# ==============================
+# 績效
+# ==============================
+perf = load_json(PERF_FILE)
+
+if perf:
+    df = pd.DataFrame(perf)
+
+    st.subheader("📊 投資績效")
+    st.dataframe(df.tail(20))
+
+    st.metric("平均命中", f"{df['命中'].mean():.2f}")
+
+# ==============================
 # 重抓
+# ==============================
 if st.button("🔄 重抓資料"):
     st.cache_data.clear()
     st.rerun()
