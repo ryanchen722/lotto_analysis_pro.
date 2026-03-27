@@ -9,27 +9,23 @@ import os
 from bs4 import BeautifulSoup
 from collections import Counter
 
-st.set_page_config(page_title="539 AI V59 自學習版", layout="wide")
+st.set_page_config(page_title="539 AI V60 進化版", layout="wide")
 
-PERF_FILE = "performance.json"
-BET_FILE = "last_bet.json"
-WEIGHT_FILE = "weights.json"
+PERF_FILE = "performance_v60.json"
+BET_FILE = "last_bet_v60.json"
+WEIGHT_FILE = "weights_v60.json"
+NUM_STAT_FILE = "number_stats.json"
 
 # ==============================
-# 初始化權重
+# 初始化
 # ==============================
-def load_weights():
-    if os.path.exists(WEIGHT_FILE):
-        return json.load(open(WEIGHT_FILE))
-    return {
-        "hot": 1.0,
-        "cold": 1.0,
-        "big": 1.0,
-        "tail": 1.0
-    }
+def load_json(file, default):
+    if os.path.exists(file):
+        return json.load(open(file))
+    return default
 
-def save_weights(w):
-    json.dump(w, open(WEIGHT_FILE,"w"), indent=2)
+def save_json(file, data):
+    json.dump(data, open(file,"w"), indent=2)
 
 # ==============================
 # 抓資料
@@ -47,7 +43,6 @@ def load_history():
             r = requests.get(url, headers=headers, timeout=10)
             r.encoding = "big5"
             soup = BeautifulSoup(r.text, "lxml")
-
             rows = soup.find_all("tr")
 
             page_data = []
@@ -62,100 +57,90 @@ def load_history():
 
             all_data.extend(page_data)
             page += 1
-
         except:
             page += 1
-            continue
 
     return all_data[:target][::-1]
 
 # ==============================
-# 工具
-# ==============================
-def load_json(file):
-    if os.path.exists(file):
-        return json.load(open(file))
-    return []
-
-def save_json(file,data):
-    json.dump(data, open(file,"w"), indent=2)
-
-# ==============================
 # 特徵分析
 # ==============================
-def analyze_features(history):
-
+def analyze(history):
     last30 = history[-30:]
     freq = Counter([n for d in last30 for n in d])
-
     hot = set([n for n,c in freq.items() if c >= 6])
     cold = set(range(1,40)) - set(freq.keys())
-
     return hot, cold
 
 # ==============================
-# 評分（核心）
+# 評分
 # ==============================
-def score_numbers(history, weights):
+def score_numbers(history, weights, num_stats):
 
-    hot, cold = analyze_features(history)
-
+    hot, cold = analyze(history)
     scores = {}
 
     for n in range(1,40):
 
         score = 1.0
 
-        # 熱號
         if n in hot:
             score *= weights["hot"]
 
-        # 冷號
         if n in cold:
             score *= weights["cold"]
 
-        # 大號
         if n >= 20:
             score *= weights["big"]
 
         # gap
         gap = next((i for i,d in enumerate(reversed(history)) if n in d),50)
-        score += gap / 20
+        score += gap/20
+
+        # 🔥 個別命中率學習
+        stat = num_stats.get(str(n), {"hit":1,"total":5})
+        rate = stat["hit"] / stat["total"]
+        score *= (0.5 + rate)
 
         scores[n] = score + random.uniform(0,0.2)
 
     return scores
 
 # ==============================
-# 選號
+# 選號 + 信心
 # ==============================
-def pick_numbers(scores):
+def pick(scores):
 
     nums = np.array(list(scores.keys()))
     vals = np.array(list(scores.values()))
     probs = vals / vals.sum()
 
-    picks = []
+    combos = []
+    combo_scores = []
 
     for _ in range(1000):
         c = sorted([int(x) for x in np.random.choice(nums,5,replace=False,p=probs)])
-        if c not in picks:
-            picks.append(c)
-        if len(picks) >= 3:
+        if c not in combos:
+            combos.append(c)
+            combo_scores.append(sum(scores[x] for x in c))
+        if len(combos) >= 3:
             break
 
-    return picks
+    # 信心分數
+    max_score = max(combo_scores)
+    confidences = [round(s/max_score*100,1) for s in combo_scores]
+
+    return combos, confidences
 
 # ==============================
 # 投資組合
 # ==============================
-def build_bets(picks):
-
-    all_nums = sum(picks, [])
+def build(picks):
+    all_nums = sum(picks,[])
     cnt = Counter(all_nums)
     core = [n for n,c in cnt.items() if c>=2]
 
-    def build(base):
+    def make(base):
         s=set(core)
         for n in base:
             if len(s)>=5: break
@@ -164,43 +149,57 @@ def build_bets(picks):
             s.add(random.randint(1,39))
         return sorted(s)
 
-    return build(picks[0]), build(picks[1])
+    return make(picks[0]), make(picks[1])
 
 # ==============================
-# 評估
+# 評估 + 誤差
 # ==============================
 def evaluate(bets, draw):
     res = []
     for b in bets:
-        hit = len(set(b) & set(draw))
-        res.append({"下注":b,"開獎":draw,"命中":hit})
+        hit = len(set(b)&set(draw))
+        error = 5-hit
+        res.append({
+            "下注":b,
+            "開獎":draw,
+            "命中":hit,
+            "誤差":error
+        })
     return res
 
 # ==============================
-# 🔥 自學習（核心）
+# 自學習
 # ==============================
-def learn(weights, results):
+def learn(weights, num_stats, results):
+
+    for r in results:
+        for n in r["下注"]:
+            stat = num_stats.setdefault(str(n), {"hit":0,"total":0})
+            stat["total"] += 1
+            if n in r["開獎"]:
+                stat["hit"] += 1
 
     avg_hit = np.mean([r["命中"] for r in results])
 
-    # 命中高 → 強化策略
     if avg_hit >= 2:
         weights["hot"] *= 1.05
         weights["big"] *= 1.02
     else:
         weights["cold"] *= 1.05
 
-    return weights
+    return weights, num_stats
 
 # ==============================
 # UI
 # ==============================
-st.title("🔥 539 AI V59（自學習進化版）")
+st.title("🔥 539 AI V60（自學習 + 誤差分析）")
 
 history = load_history()
-weights = load_weights()
 
-st.write("📦 目前權重", weights)
+weights = load_json(WEIGHT_FILE, {"hot":1,"cold":1,"big":1})
+num_stats = load_json(NUM_STAT_FILE, {})
+
+st.write("📦 權重", weights)
 
 # 最新五期
 st.subheader("📅 最新五期")
@@ -209,51 +208,48 @@ for i,d in enumerate(history[-5:][::-1]):
     cols[i].code(" ".join(map(str,d)))
 
 # 預測
-if st.button("🚀 預測"):
+if st.button("🚀 AI預測"):
 
-    scores = score_numbers(history, weights)
-    picks = pick_numbers(scores)
-    bet1, bet2 = build_bets(picks)
+    scores = score_numbers(history, weights, num_stats)
+    picks, conf = pick(scores)
+    b1,b2 = build(picks)
 
-    st.success(bet1)
-    st.success(bet2)
+    st.subheader("💰 投資組合")
+    st.success(f"{b1} ｜信心 {conf[0]}%")
+    st.success(f"{b2} ｜信心 {conf[1]}%")
 
-    save_json(BET_FILE, {
-        "bets":[bet1,bet2],
-        "index": len(history)
+    save_json(BET_FILE,{
+        "bets":[b1,b2],
+        "index":len(history)
     })
 
-# 驗證 + 學習
+# 驗證
 if os.path.exists(BET_FILE):
 
-    bet_data = load_json(BET_FILE)
-
+    bet_data = load_json(BET_FILE, {})
     if len(history) > bet_data["index"]:
 
         draw = history[bet_data["index"]]
-
         results = evaluate(bet_data["bets"], draw)
 
-        perf = load_json(PERF_FILE)
+        perf = load_json(PERF_FILE, [])
         perf.extend(results)
         save_json(PERF_FILE, perf)
 
-        # 🔥 學習
-        weights = learn(weights, results)
-        save_weights(weights)
+        weights, num_stats = learn(weights, num_stats, results)
+        save_json(WEIGHT_FILE, weights)
+        save_json(NUM_STAT_FILE, num_stats)
 
         os.remove(BET_FILE)
 
-        st.success("✅ 已學習並更新權重")
+        st.success("✅ 已學習（含誤差分析）")
 
 # 績效
-perf = load_json(PERF_FILE)
+perf = load_json(PERF_FILE, [])
 if perf:
     df = pd.DataFrame(perf)
+    st.subheader("📊 績效分析")
     st.dataframe(df.tail(20))
-    st.metric("平均命中", f"{df['命中'].mean():.2f}")
 
-# 重抓
-if st.button("🔄 重抓"):
-    st.cache_data.clear()
-    st.rerun()
+    st.metric("平均命中", f"{df['命中'].mean():.2f}")
+    st.metric("平均誤差", f"{df['誤差'].mean():.2f}")
