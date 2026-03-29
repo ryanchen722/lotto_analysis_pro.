@@ -4,28 +4,10 @@ import requests
 import re
 import pandas as pd
 import numpy as np
-import json
-import os
 from bs4 import BeautifulSoup
-from collections import Counter
+from collections import Counter, defaultdict
 
-st.set_page_config(page_title="539 AI V60 進化版", layout="wide")
-
-PERF_FILE = "performance_v60.json"
-BET_FILE = "last_bet_v60.json"
-WEIGHT_FILE = "weights_v60.json"
-NUM_STAT_FILE = "number_stats.json"
-
-# ==============================
-# 初始化
-# ==============================
-def load_json(file, default):
-    if os.path.exists(file):
-        return json.load(open(file))
-    return default
-
-def save_json(file, data):
-    json.dump(data, open(file,"w"), indent=2)
+st.set_page_config(page_title="539 AI V61 真分析版", layout="wide")
 
 # ==============================
 # 抓資料
@@ -57,149 +39,135 @@ def load_history():
 
             all_data.extend(page_data)
             page += 1
+
         except:
             page += 1
 
     return all_data[:target][::-1]
 
 # ==============================
-# 特徵分析
+# 🧠 盤勢分類
 # ==============================
-def analyze(history):
-    last30 = history[-30:]
-    freq = Counter([n for d in last30 for n in d])
-    hot = set([n for n,c in freq.items() if c >= 6])
-    cold = set(range(1,40)) - set(freq.keys())
-    return hot, cold
+def classify(draw):
+    avg = np.mean(draw)
+    tails = [n % 10 for n in draw]
+    tail_concentration = max(Counter(tails).values())
+
+    if avg < 18:
+        return "冷盤"
+    elif avg > 23:
+        return "熱盤"
+    elif tail_concentration >= 3:
+        return "爆發盤"
+    else:
+        return "均衡盤"
 
 # ==============================
-# 評分
+# 🧠 建立轉移模型
 # ==============================
-def score_numbers(history, weights, num_stats):
+def build_transition(history):
 
-    hot, cold = analyze(history)
-    scores = {}
+    transition = {
+        "冷盤": Counter(),
+        "熱盤": Counter(),
+        "均衡盤": Counter(),
+        "爆發盤": Counter()
+    }
+
+    count = Counter()
+
+    for i in range(len(history)-1):
+
+        state = classify(history[i])
+        next_draw = history[i+1]
+
+        count[state] += 1
+
+        for n in next_draw:
+            transition[state][n] += 1
+
+    # 轉機率
+    probs = {}
+
+    for state in transition:
+        total = sum(transition[state].values())
+        if total == 0:
+            continue
+        probs[state] = {n: transition[state][n]/total for n in range(1,40)}
+
+    return probs
+
+# ==============================
+# 🧠 區間補償
+# ==============================
+def zone_boost(last_draw):
+
+    zones = {
+        "small": sum(1 for n in last_draw if n <= 13),
+        "mid": sum(1 for n in last_draw if 14 <= n <= 26),
+        "big": sum(1 for n in last_draw if n >= 27),
+    }
+
+    boost = {"small":1.0,"mid":1.0,"big":1.0}
+
+    for z in zones:
+        if zones[z] == 0:
+            boost[z] = 1.3
+        elif zones[z] >= 3:
+            boost[z] = 0.8
+
+    return boost
+
+# ==============================
+# 🧠 產生預測
+# ==============================
+def predict(history, probs):
+
+    last = history[-1]
+    state = classify(last)
+
+    base_prob = probs.get(state, {n:1/39 for n in range(1,40)})
+
+    boost = zone_boost(last)
+
+    final_scores = {}
 
     for n in range(1,40):
 
-        score = 1.0
+        score = base_prob.get(n, 0.01)
 
-        if n in hot:
-            score *= weights["hot"]
+        if n <= 13:
+            score *= boost["small"]
+        elif n <= 26:
+            score *= boost["mid"]
+        else:
+            score *= boost["big"]
 
-        if n in cold:
-            score *= weights["cold"]
+        final_scores[n] = score
 
-        if n >= 20:
-            score *= weights["big"]
-
-        # gap
-        gap = next((i for i,d in enumerate(reversed(history)) if n in d),50)
-        score += gap/20
-
-        # 🔥 個別命中率學習
-        stat = num_stats.get(str(n), {"hit":1,"total":5})
-        rate = stat["hit"] / stat["total"]
-        score *= (0.5 + rate)
-
-        scores[n] = score + random.uniform(0,0.2)
-
-    return scores
-
-# ==============================
-# 選號 + 信心
-# ==============================
-def pick(scores):
-
-    nums = np.array(list(scores.keys()))
-    vals = np.array(list(scores.values()))
+    # normalize
+    nums = np.array(list(final_scores.keys()))
+    vals = np.array(list(final_scores.values()))
     probs = vals / vals.sum()
 
-    combos = []
-    combo_scores = []
-
+    picks = []
     for _ in range(1000):
-        c = sorted([int(x) for x in np.random.choice(nums,5,replace=False,p=probs)])
-        if c not in combos:
-            combos.append(c)
-            combo_scores.append(sum(scores[x] for x in c))
-        if len(combos) >= 3:
+        c = sorted(np.random.choice(nums,5,replace=False,p=probs))
+        c = [int(x) for x in c]
+        if c not in picks:
+            picks.append(c)
+        if len(picks) >= 3:
             break
 
-    # 信心分數
-    max_score = max(combo_scores)
-    confidences = [round(s/max_score*100,1) for s in combo_scores]
-
-    return combos, confidences
-
-# ==============================
-# 投資組合
-# ==============================
-def build(picks):
-    all_nums = sum(picks,[])
-    cnt = Counter(all_nums)
-    core = [n for n,c in cnt.items() if c>=2]
-
-    def make(base):
-        s=set(core)
-        for n in base:
-            if len(s)>=5: break
-            s.add(n)
-        while len(s)<5:
-            s.add(random.randint(1,39))
-        return sorted(s)
-
-    return make(picks[0]), make(picks[1])
-
-# ==============================
-# 評估 + 誤差
-# ==============================
-def evaluate(bets, draw):
-    res = []
-    for b in bets:
-        hit = len(set(b)&set(draw))
-        error = 5-hit
-        res.append({
-            "下注":b,
-            "開獎":draw,
-            "命中":hit,
-            "誤差":error
-        })
-    return res
-
-# ==============================
-# 自學習
-# ==============================
-def learn(weights, num_stats, results):
-
-    for r in results:
-        for n in r["下注"]:
-            stat = num_stats.setdefault(str(n), {"hit":0,"total":0})
-            stat["total"] += 1
-            if n in r["開獎"]:
-                stat["hit"] += 1
-
-    avg_hit = np.mean([r["命中"] for r in results])
-
-    if avg_hit >= 2:
-        weights["hot"] *= 1.05
-        weights["big"] *= 1.02
-    else:
-        weights["cold"] *= 1.05
-
-    return weights, num_stats
+    return picks, state
 
 # ==============================
 # UI
 # ==============================
-st.title("🔥 539 AI V60（自學習 + 誤差分析）")
+st.title("🔥 539 AI V61（真正分析版）")
 
 history = load_history()
-
-weights = load_json(WEIGHT_FILE, {"hot":1,"cold":1,"big":1})
-num_stats = load_json(NUM_STAT_FILE, {})
-
-st.write("📦 權重", weights)
+probs = build_transition(history)
 
 # 最新五期
 st.subheader("📅 最新五期")
@@ -207,49 +175,18 @@ cols = st.columns(5)
 for i,d in enumerate(history[-5:][::-1]):
     cols[i].code(" ".join(map(str,d)))
 
+# 顯示盤勢
+current_state = classify(history[-1])
+st.info(f"📊 當前盤勢：{current_state}")
+
 # 預測
-if st.button("🚀 AI預測"):
+if st.button("🚀 AI分析預測"):
 
-    scores = score_numbers(history, weights, num_stats)
-    picks, conf = pick(scores)
-    b1,b2 = build(picks)
+    picks, state = predict(history, probs)
 
-    st.subheader("💰 投資組合")
-    st.success(f"{b1} ｜信心 {conf[0]}%")
-    st.success(f"{b2} ｜信心 {conf[1]}%")
+    st.subheader("🎯 AI 推薦（基於盤勢轉移）")
 
-    save_json(BET_FILE,{
-        "bets":[b1,b2],
-        "index":len(history)
-    })
+    for i,p in enumerate(picks):
+        st.success(f"策略 {i+1}：{' - '.join(map(str,p))}")
 
-# 驗證
-if os.path.exists(BET_FILE):
-
-    bet_data = load_json(BET_FILE, {})
-    if len(history) > bet_data["index"]:
-
-        draw = history[bet_data["index"]]
-        results = evaluate(bet_data["bets"], draw)
-
-        perf = load_json(PERF_FILE, [])
-        perf.extend(results)
-        save_json(PERF_FILE, perf)
-
-        weights, num_stats = learn(weights, num_stats, results)
-        save_json(WEIGHT_FILE, weights)
-        save_json(NUM_STAT_FILE, num_stats)
-
-        os.remove(BET_FILE)
-
-        st.success("✅ 已學習（含誤差分析）")
-
-# 績效
-perf = load_json(PERF_FILE, [])
-if perf:
-    df = pd.DataFrame(perf)
-    st.subheader("📊 績效分析")
-    st.dataframe(df.tail(20))
-
-    st.metric("平均命中", f"{df['命中'].mean():.2f}")
-    st.metric("平均誤差", f"{df['誤差'].mean():.2f}")
+    st.caption(f"推理依據：目前為「{state}」，使用歷史轉移機率生成")
