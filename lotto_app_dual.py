@@ -3,10 +3,11 @@ import streamlit as st
 import requests
 import re
 import numpy as np
+import pandas as pd
 from bs4 import BeautifulSoup
 from collections import Counter
 
-st.set_page_config(page_title="539 AI V62 三策略版", layout="wide")
+st.set_page_config(page_title="539 AI V63 回測驗證版", layout="wide")
 
 # ==============================
 # 抓資料
@@ -44,25 +45,22 @@ def load_history():
     return all_data[:target][::-1]
 
 # ==============================
-# 🧠 盤勢分類
+# 盤勢分類
 # ==============================
 def classify(draw):
     avg = np.mean(draw)
-    tails = [n % 10 for n in draw]
     if avg < 18:
         return "冷盤"
     elif avg > 23:
         return "熱盤"
-    elif max(Counter(tails).values()) >= 3:
-        return "爆發盤"
     else:
         return "均衡盤"
 
 # ==============================
-# 🧠 建立轉移機率
+# 建立轉移機率
 # ==============================
 def build_transition(history):
-    trans = {"冷盤":Counter(),"熱盤":Counter(),"均衡盤":Counter(),"爆發盤":Counter()}
+    trans = {"冷盤":Counter(),"熱盤":Counter(),"均衡盤":Counter()}
     for i in range(len(history)-1):
         state = classify(history[i])
         for n in history[i+1]:
@@ -76,86 +74,44 @@ def build_transition(history):
     return probs
 
 # ==============================
-# 🏆 策略1：轉移機率
+# 預測
 # ==============================
-def strategy_trend(history, probs):
+def predict_one(history):
+    probs = build_transition(history)
     state = classify(history[-1])
+
     base = probs.get(state, {n:1/39 for n in range(1,40)})
 
     nums = np.array(list(base.keys()))
     vals = np.array(list(base.values()))
-    p = vals/vals.sum()
+    p = vals / vals.sum()
 
     return sorted(np.random.choice(nums,5,replace=False,p=p))
 
 # ==============================
-# ⚖️ 策略2：區間補償
+# 回測
 # ==============================
-def strategy_zone(history):
-    last = history[-1]
+def backtest(history, test_size=500):
 
-    small = [n for n in range(1,14)]
-    mid = [n for n in range(14,27)]
-    big = [n for n in range(27,40)]
+    hits = []
 
-    count = {
-        "small":sum(1 for n in last if n in small),
-        "mid":sum(1 for n in last if n in mid),
-        "big":sum(1 for n in last if n in big)
-    }
+    for i in range(len(history)-test_size, len(history)-1):
 
-    picks = []
+        train = history[:i]
+        pred = predict_one(train)
+        actual = history[i]
 
-    if count["small"] == 0:
-        picks += random.sample(small,2)
-    if count["mid"] == 0:
-        picks += random.sample(mid,2)
-    if count["big"] == 0:
-        picks += random.sample(big,2)
+        hit = len(set(pred) & set(actual))
+        hits.append(hit)
 
-    while len(picks) < 5:
-        picks.append(random.randint(1,39))
-
-    return sorted(set(picks))[:5]
-
-# ==============================
-# 🎲 策略3：冷門反彈
-# ==============================
-def strategy_cold(history):
-    last50 = history[-50:]
-    freq = Counter([n for d in last50 for n in d])
-
-    cold = sorted(range(1,40), key=lambda x: freq[x])[:15]
-
-    return sorted(random.sample(cold,5))
-
-# ==============================
-# 🎯 投資組合
-# ==============================
-def build_bets(s1,s2,s3):
-    all_nums = s1+s2+s3
-    cnt = Counter(all_nums)
-
-    core = [n for n,c in cnt.items() if c>=2]
-
-    def make(base):
-        s=set(core)
-        for n in base:
-            if len(s)>=5: break
-            s.add(n)
-        while len(s)<5:
-            s.add(random.randint(1,39))
-        return sorted(s)
-
-    return make(s1), make(s2)
+    return hits
 
 # ==============================
 # UI
 # ==============================
-st.title("🔥 539 AI V62（三策略系統）")
+st.title("🔥 539 AI V63（回測驗證系統）")
 
 history = load_history()
-probs = build_transition(history)
 
 # 最新五期
 st.subheader("📅 最新五期")
@@ -163,33 +119,35 @@ cols = st.columns(5)
 for i,d in enumerate(history[-5:][::-1]):
     cols[i].code(" ".join(map(str,d)))
 
-# 顯示盤勢
-state = classify(history[-1])
-st.info(f"📊 當前盤勢：{state}")
+# 回測按鈕
+if st.button("🚀 開始回測模型（500期）"):
 
-# 預測
-if st.button("🚀 啟動三策略預測"):
+    with st.spinner("正在回測中..."):
+        hits = backtest(history, test_size=500)
 
-    s1 = strategy_trend(history, probs)
-    s2 = strategy_zone(history)
-    s3 = strategy_cold(history)
+    df = pd.DataFrame({"命中數": hits})
 
-    st.subheader("🧠 三策略分析")
+    avg_hit = np.mean(hits)
 
-    col1,col2,col3 = st.columns(3)
+    st.subheader("📊 回測結果")
 
-    col1.success(f"🏆 趨勢策略：{' - '.join(map(str,s1))}")
-    col2.success(f"⚖️ 區間補償：{' - '.join(map(str,s2))}")
-    col3.success(f"🎲 冷門反彈：{' - '.join(map(str,s3))}")
+    st.metric("平均命中", f"{avg_hit:.3f}")
 
-    # 投資組合
-    b1,b2 = build_bets(s1,s2,s3)
+    # 分布
+    dist = Counter(hits)
+    dist_df = pd.DataFrame({
+        "命中數": list(dist.keys()),
+        "次數": list(dist.values())
+    }).sort_values("命中數")
 
-    st.subheader("💰 最佳投注組合")
-    st.success(f"第1注：{' - '.join(map(str,b1))}")
-    st.success(f"第2注：{' - '.join(map(str,b2))}")
+    st.bar_chart(dist_df.set_index("命中數"))
 
-# 重抓
-if st.button("🔄 重抓資料"):
-    st.cache_data.clear()
-    st.rerun()
+    # baseline
+    st.info("🎯 隨機 baseline ≈ 0.64")
+
+    if avg_hit > 0.8:
+        st.success("🔥 模型有優勢")
+    elif avg_hit > 0.65:
+        st.warning("⚠️ 略高於隨機，但不穩")
+    else:
+        st.error("❌ 沒有優勢（接近隨機）")
