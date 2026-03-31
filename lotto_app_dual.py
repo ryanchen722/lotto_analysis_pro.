@@ -6,15 +6,16 @@ import numpy as np
 import pandas as pd
 from bs4 import BeautifulSoup
 from collections import Counter
+from sklearn.linear_model import LogisticRegression
 
-st.set_page_config(page_title="539 AI V64 自學習系統", layout="wide")
+st.set_page_config(page_title="539 AI V67 Lite", layout="wide")
 
 # ==============================
 # 抓資料
 # ==============================
 @st.cache_data(ttl=10800)
 def load_history():
-    target = 1770
+    target = 800  # 🔥 減少資料量（更快）
     headers = {"User-Agent": "Mozilla/5.0"}
     all_data = []
     page = 1
@@ -45,73 +46,87 @@ def load_history():
     return all_data[:target][::-1]
 
 # ==============================
-# 策略
+# 特徵工程（簡化版）
 # ==============================
-def strategy_trend(history):
-    last30 = history[-30:]
-    freq = Counter([n for d in last30 for n in d])
-    return [n for n,_ in freq.most_common(5)]
+def build_features(history):
 
-def strategy_zone(history):
-    last = history[-1]
-    zones = {
-        "small": [n for n in range(1,14)],
-        "mid": [n for n in range(14,27)],
-        "big": [n for n in range(27,40)]
-    }
+    X, Y = [], []
 
-    picks = []
-    for k,v in zones.items():
-        if not any(n in v for n in last):
-            picks += random.sample(v,2)
+    for i in range(50, len(history)-1):
 
-    while len(picks) < 5:
-        picks.append(random.randint(1,39))
+        past = history[:i]
 
-    return sorted(set(picks))[:5]
+        freq = Counter([n for d in past[-30:] for n in d])
 
-def strategy_cold(history):
-    last50 = history[-50:]
-    freq = Counter([n for d in last50 for n in d])
-    cold = sorted(range(1,40), key=lambda x: freq[x])[:15]
-    return random.sample(cold,5)
+        row = []
+
+        for n in range(1,40):
+            gap = next((j for j,d in enumerate(reversed(past)) if n in d), 50)
+            row.extend([freq[n], gap])
+
+        label = [1 if n in history[i] else 0 for n in range(1,40)]
+
+        X.append(row)
+        Y.append(label)
+
+    return np.array(X), np.array(Y)
 
 # ==============================
-# 回測策略表現
+# 🔥 模型（快取）
 # ==============================
-def backtest_strategy(history, func, test_size=300):
+@st.cache_resource
+def train_models(history):
 
-    hits = []
+    X, Y = build_features(history)
 
-    for i in range(len(history)-test_size, len(history)-1):
-        train = history[:i]
-        pred = func(train)
-        actual = history[i]
-        hits.append(len(set(pred)&set(actual)))
+    models = []
 
-    return np.mean(hits)
+    for i in range(39):
+        y = Y[:,i]
+        model = LogisticRegression(max_iter=500)
+        model.fit(X, y)
+        models.append(model)
+
+    return models
 
 # ==============================
-# 融合推薦
+# 預測
 # ==============================
-def combine(s1, s2, s3, w1, w2, w3):
+def predict(models, history):
 
-    score = Counter()
+    freq = Counter([n for d in history[-30:] for n in d])
 
-    for n in s1:
-        score[n] += w1
-    for n in s2:
-        score[n] += w2
-    for n in s3:
-        score[n] += w3
+    row = []
 
-    final = [n for n,_ in score.most_common(5)]
-    return sorted(final)
+    for n in range(1,40):
+        gap = next((j for j,d in enumerate(reversed(history)) if n in d), 50)
+        row.extend([freq[n], gap])
+
+    row = np.array(row).reshape(1,-1)
+
+    probs = []
+
+    for m in models:
+        p = m.predict_proba(row)[0][1]
+        probs.append(p)
+
+    return {i+1:probs[i] for i in range(39)}
+
+# ==============================
+# 選號
+# ==============================
+def pick_numbers(prob):
+
+    nums = np.array(list(prob.keys()))
+    vals = np.array(list(prob.values()))
+    vals = vals / vals.sum()
+
+    return sorted(np.random.choice(nums,5,replace=False,p=vals))
 
 # ==============================
 # UI
 # ==============================
-st.title("🔥 539 AI V64（自學習進化版）")
+st.title("🔥 539 AI V67 Lite（Stream版）")
 
 history = load_history()
 
@@ -124,48 +139,25 @@ for i,d in enumerate(history[-5:][::-1]):
 # ==============================
 # 執行
 # ==============================
-if st.button("🚀 啟動AI自學習預測"):
+if st.button("🚀 AI預測"):
 
-    with st.spinner("AI學習中..."):
+    with st.spinner("AI學習中（只會跑一次）..."):
 
-        s1_score = backtest_strategy(history, strategy_trend)
-        s2_score = backtest_strategy(history, strategy_zone)
-        s3_score = backtest_strategy(history, strategy_cold)
+        models = train_models(history)  # 🔥 只會訓練一次
+        prob = predict(models, history)
+        pred = pick_numbers(prob)
 
-        total = s1_score + s2_score + s3_score
+    # 機率
+    st.subheader("📊 機率 Top10")
+    top10 = sorted(prob.items(), key=lambda x:x[1], reverse=True)[:10]
+    st.write(top10)
 
-        w1 = s1_score / total
-        w2 = s2_score / total
-        w3 = s3_score / total
-
-        s1 = strategy_trend(history)
-        s2 = strategy_zone(history)
-        s3 = strategy_cold(history)
-
-        final = combine(s1, s2, s3, w1, w2, w3)
-
-    # 顯示策略表現
-    st.subheader("📊 策略表現（回測）")
-
-    df = pd.DataFrame({
-        "策略": ["趨勢","區間","冷門"],
-        "平均命中": [s1_score, s2_score, s3_score],
-        "權重": [w1, w2, w3]
-    })
-
-    st.dataframe(df)
-
-    # 顯示策略號碼
-    st.subheader("🧠 各策略推薦")
-    st.write("🏆 趨勢：", s1)
-    st.write("⚖️ 區間：", s2)
-    st.write("🎲 冷門：", s3)
-
-    # 最終推薦
-    st.subheader("💰 最終推薦號碼（AI融合）")
-    st.success(" - ".join(f"{n:02d}" for n in final))
+    # 推薦
+    st.subheader("💰 推薦號碼")
+    st.success(" - ".join(f"{n:02d}" for n in pred))
 
 # 重抓
 if st.button("🔄 重抓資料"):
     st.cache_data.clear()
+    st.cache_resource.clear()
     st.rerun()
