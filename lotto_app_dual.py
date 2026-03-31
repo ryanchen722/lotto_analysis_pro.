@@ -7,7 +7,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from collections import Counter
 
-st.set_page_config(page_title="539 AI V63 回測驗證版", layout="wide")
+st.set_page_config(page_title="539 AI V64 自學習系統", layout="wide")
 
 # ==============================
 # 抓資料
@@ -45,71 +45,73 @@ def load_history():
     return all_data[:target][::-1]
 
 # ==============================
-# 盤勢分類
+# 策略
 # ==============================
-def classify(draw):
-    avg = np.mean(draw)
-    if avg < 18:
-        return "冷盤"
-    elif avg > 23:
-        return "熱盤"
-    else:
-        return "均衡盤"
+def strategy_trend(history):
+    last30 = history[-30:]
+    freq = Counter([n for d in last30 for n in d])
+    return [n for n,_ in freq.most_common(5)]
+
+def strategy_zone(history):
+    last = history[-1]
+    zones = {
+        "small": [n for n in range(1,14)],
+        "mid": [n for n in range(14,27)],
+        "big": [n for n in range(27,40)]
+    }
+
+    picks = []
+    for k,v in zones.items():
+        if not any(n in v for n in last):
+            picks += random.sample(v,2)
+
+    while len(picks) < 5:
+        picks.append(random.randint(1,39))
+
+    return sorted(set(picks))[:5]
+
+def strategy_cold(history):
+    last50 = history[-50:]
+    freq = Counter([n for d in last50 for n in d])
+    cold = sorted(range(1,40), key=lambda x: freq[x])[:15]
+    return random.sample(cold,5)
 
 # ==============================
-# 建立轉移機率
+# 回測策略表現
 # ==============================
-def build_transition(history):
-    trans = {"冷盤":Counter(),"熱盤":Counter(),"均衡盤":Counter()}
-    for i in range(len(history)-1):
-        state = classify(history[i])
-        for n in history[i+1]:
-            trans[state][n] += 1
-
-    probs = {}
-    for s in trans:
-        total = sum(trans[s].values())
-        if total == 0: continue
-        probs[s] = {n:trans[s][n]/total for n in range(1,40)}
-    return probs
-
-# ==============================
-# 預測
-# ==============================
-def predict_one(history):
-    probs = build_transition(history)
-    state = classify(history[-1])
-
-    base = probs.get(state, {n:1/39 for n in range(1,40)})
-
-    nums = np.array(list(base.keys()))
-    vals = np.array(list(base.values()))
-    p = vals / vals.sum()
-
-    return sorted(np.random.choice(nums,5,replace=False,p=p))
-
-# ==============================
-# 回測
-# ==============================
-def backtest(history, test_size=500):
+def backtest_strategy(history, func, test_size=300):
 
     hits = []
 
     for i in range(len(history)-test_size, len(history)-1):
-
         train = history[:i]
-        pred = predict_one(train)
+        pred = func(train)
         actual = history[i]
+        hits.append(len(set(pred)&set(actual)))
 
-        hit = len(set(pred) & set(actual))
-        hits.append(hit)
+    return np.mean(hits)
 
-    return hits
+# ==============================
+# 融合推薦
+# ==============================
+def combine(s1, s2, s3, w1, w2, w3):
+
+    score = Counter()
+
+    for n in s1:
+        score[n] += w1
+    for n in s2:
+        score[n] += w2
+    for n in s3:
+        score[n] += w3
+
+    final = [n for n,_ in score.most_common(5)]
+    return sorted(final)
 
 # ==============================
 # UI
 # ==============================
-st.title("🔥 539 AI V63（回測驗證系統）")
+st.title("🔥 539 AI V64（自學習進化版）")
 
 history = load_history()
 
@@ -119,35 +121,51 @@ cols = st.columns(5)
 for i,d in enumerate(history[-5:][::-1]):
     cols[i].code(" ".join(map(str,d)))
 
-# 回測按鈕
-if st.button("🚀 開始回測模型（500期）"):
+# ==============================
+# 執行
+# ==============================
+if st.button("🚀 啟動AI自學習預測"):
 
-    with st.spinner("正在回測中..."):
-        hits = backtest(history, test_size=500)
+    with st.spinner("AI學習中..."):
 
-    df = pd.DataFrame({"命中數": hits})
+        s1_score = backtest_strategy(history, strategy_trend)
+        s2_score = backtest_strategy(history, strategy_zone)
+        s3_score = backtest_strategy(history, strategy_cold)
 
-    avg_hit = np.mean(hits)
+        total = s1_score + s2_score + s3_score
 
-    st.subheader("📊 回測結果")
+        w1 = s1_score / total
+        w2 = s2_score / total
+        w3 = s3_score / total
 
-    st.metric("平均命中", f"{avg_hit:.3f}")
+        s1 = strategy_trend(history)
+        s2 = strategy_zone(history)
+        s3 = strategy_cold(history)
 
-    # 分布
-    dist = Counter(hits)
-    dist_df = pd.DataFrame({
-        "命中數": list(dist.keys()),
-        "次數": list(dist.values())
-    }).sort_values("命中數")
+        final = combine(s1, s2, s3, w1, w2, w3)
 
-    st.bar_chart(dist_df.set_index("命中數"))
+    # 顯示策略表現
+    st.subheader("📊 策略表現（回測）")
 
-    # baseline
-    st.info("🎯 隨機 baseline ≈ 0.64")
+    df = pd.DataFrame({
+        "策略": ["趨勢","區間","冷門"],
+        "平均命中": [s1_score, s2_score, s3_score],
+        "權重": [w1, w2, w3]
+    })
 
-    if avg_hit > 0.8:
-        st.success("🔥 模型有優勢")
-    elif avg_hit > 0.65:
-        st.warning("⚠️ 略高於隨機，但不穩")
-    else:
-        st.error("❌ 沒有優勢（接近隨機）")
+    st.dataframe(df)
+
+    # 顯示策略號碼
+    st.subheader("🧠 各策略推薦")
+    st.write("🏆 趨勢：", s1)
+    st.write("⚖️ 區間：", s2)
+    st.write("🎲 冷門：", s3)
+
+    # 最終推薦
+    st.subheader("💰 最終推薦號碼（AI融合）")
+    st.success(" - ".join(f"{n:02d}" for n in final))
+
+# 重抓
+if st.button("🔄 重抓資料"):
+    st.cache_data.clear()
+    st.rerun()
