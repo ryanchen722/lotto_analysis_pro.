@@ -4,18 +4,22 @@ import requests
 import re
 import numpy as np
 import pandas as pd
+import json
+import os
 from bs4 import BeautifulSoup
 from collections import Counter
-from sklearn.linear_model import LogisticRegression
 
-st.set_page_config(page_title="539 AI V67 Lite", layout="wide")
+st.set_page_config(page_title="539 AI V67.5 實戰版", layout="wide")
+
+PERF_FILE = "perf.json"
+WEIGHT_FILE = "weights.json"
 
 # ==============================
 # 抓資料
 # ==============================
 @st.cache_data(ttl=10800)
 def load_history():
-    target = 800  # 🔥 減少資料量（更快）
+    target = 800
     headers = {"User-Agent": "Mozilla/5.0"}
     all_data = []
     page = 1
@@ -46,89 +50,109 @@ def load_history():
     return all_data[:target][::-1]
 
 # ==============================
-# 特徵工程（簡化版）
+# 權重讀寫
 # ==============================
-def build_features(history):
+def load_weights():
+    if os.path.exists(WEIGHT_FILE):
+        return json.load(open(WEIGHT_FILE))
+    return {"freq":1.2, "gap":0.3, "decay":2.0}
 
-    X, Y = [], []
-
-    for i in range(50, len(history)-1):
-
-        past = history[:i]
-
-        freq = Counter([n for d in past[-30:] for n in d])
-
-        row = []
-
-        for n in range(1,40):
-            gap = next((j for j,d in enumerate(reversed(past)) if n in d), 50)
-            row.extend([freq[n], gap])
-
-        label = [1 if n in history[i] else 0 for n in range(1,40)]
-
-        X.append(row)
-        Y.append(label)
-
-    return np.array(X), np.array(Y)
+def save_weights(w):
+    json.dump(w, open(WEIGHT_FILE,"w"))
 
 # ==============================
-# 🔥 模型（快取）
+# 核心評分
 # ==============================
-@st.cache_resource
-def train_models(history):
+def score_numbers(history, weights):
 
-    X, Y = build_features(history)
-
-    models = []
-
-    for i in range(39):
-        y = Y[:,i]
-        model = LogisticRegression(max_iter=500)
-        model.fit(X, y)
-        models.append(model)
-
-    return models
-
-# ==============================
-# 預測
-# ==============================
-def predict(models, history):
-
-    freq = Counter([n for d in history[-30:] for n in d])
-
-    row = []
+    scores = {}
+    recent = history[-30:]
+    freq = Counter([n for d in recent for n in d])
 
     for n in range(1,40):
-        gap = next((j for j,d in enumerate(reversed(history)) if n in d), 50)
-        row.extend([freq[n], gap])
 
-    row = np.array(row).reshape(1,-1)
+        gap = next((i for i,d in enumerate(reversed(history)) if n in d),50)
 
-    probs = []
+        decay = 0
+        for i,d in enumerate(reversed(history[-50:])):
+            if n in d:
+                decay += 1/(i+1)
 
-    for m in models:
-        p = m.predict_proba(row)[0][1]
-        probs.append(p)
+        score = (
+            freq[n]*weights["freq"] +
+            gap*weights["gap"] +
+            decay*weights["decay"]
+        )
 
-    return {i+1:probs[i] for i in range(39)}
+        scores[n] = score
+
+    return scores
 
 # ==============================
-# 選號
+# 選號（不隨機🔥）
 # ==============================
-def pick_numbers(prob):
+def pick_numbers(scores):
 
-    nums = np.array(list(prob.keys()))
-    vals = np.array(list(prob.values()))
-    vals = vals / vals.sum()
+    nums = sorted(scores, key=scores.get, reverse=True)
 
-    return sorted(np.random.choice(nums,5,replace=False,p=vals))
+    combos = []
+    i = 0
+
+    while len(combos) < 2:
+        c = sorted(nums[i:i+5])
+
+        odd = sum(n%2 for n in c)
+        big = sum(n>=20 for n in c)
+
+        if 2 <= odd <= 3 and 2 <= big <= 3:
+            combos.append(c)
+
+        i += 1
+
+    return combos
+
+# ==============================
+# 績效
+# ==============================
+def load_perf():
+    if os.path.exists(PERF_FILE):
+        return json.load(open(PERF_FILE))
+    return []
+
+def save_perf(data):
+    json.dump(data, open(PERF_FILE,"w"))
+
+def evaluate(bets, draw):
+    res = []
+    for b in bets:
+        hit = len(set(b)&set(draw))
+        res.append(hit)
+    return res
+
+# ==============================
+# 自動學習（關鍵🔥）
+# ==============================
+def update_weights(weights, hits):
+
+    avg = np.mean(hits)
+
+    # 如果表現差 → 調整
+    if avg < 1:
+        weights["gap"] *= 1.1
+        weights["freq"] *= 0.9
+
+    elif avg > 2:
+        weights["freq"] *= 1.1
+
+    return weights
 
 # ==============================
 # UI
 # ==============================
-st.title("🔥 539 AI V67 Lite（Stream版）")
+st.title("🔥 539 AI V67.5（會進化版）")
 
 history = load_history()
+weights = load_weights()
 
 # 最新五期
 st.subheader("📅 最新五期")
@@ -136,28 +160,61 @@ cols = st.columns(5)
 for i,d in enumerate(history[-5:][::-1]):
     cols[i].code(" ".join(map(str,d)))
 
+# 顯示權重
+st.subheader("⚙️ 當前權重")
+st.write(weights)
+
 # ==============================
-# 執行
+# 預測
 # ==============================
 if st.button("🚀 AI預測"):
 
-    with st.spinner("AI學習中（只會跑一次）..."):
+    scores = score_numbers(history, weights)
+    bets = pick_numbers(scores)
 
-        models = train_models(history)  # 🔥 只會訓練一次
-        prob = predict(models, history)
-        pred = pick_numbers(prob)
+    st.subheader("💰 投資組合")
+    for b in bets:
+        st.success(" - ".join(f"{n:02d}" for n in b))
 
-    # 機率
-    st.subheader("📊 機率 Top10")
-    top10 = sorted(prob.items(), key=lambda x:x[1], reverse=True)[:10]
-    st.write(top10)
+    st.session_state["last_bets"] = bets
 
-    # 推薦
-    st.subheader("💰 推薦號碼")
-    st.success(" - ".join(f"{n:02d}" for n in pred))
+# ==============================
+# 自動比對（下一期）
+# ==============================
+if "last_bets" in st.session_state:
+
+    last_draw = history[-1]
+
+    hits = evaluate(st.session_state["last_bets"], last_draw)
+
+    perf = load_perf()
+    perf.append({
+        "draw": last_draw,
+        "hits": hits
+    })
+    save_perf(perf)
+
+    # 🔥 自動調整
+    weights = update_weights(weights, hits)
+    save_weights(weights)
+
+    del st.session_state["last_bets"]
+
+    st.success(f"✅ 已更新命中：{hits}")
+
+# ==============================
+# 顯示績效
+# ==============================
+perf = load_perf()
+if perf:
+    df = pd.DataFrame(perf)
+    st.subheader("📊 歷史績效")
+    st.dataframe(df.tail(20))
+
+    avg = np.mean([np.mean(x) for x in df["hits"]])
+    st.metric("平均命中", f"{avg:.2f}")
 
 # 重抓
 if st.button("🔄 重抓資料"):
     st.cache_data.clear()
-    st.cache_resource.clear()
     st.rerun()
