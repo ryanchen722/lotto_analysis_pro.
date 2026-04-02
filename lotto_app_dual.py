@@ -143,7 +143,7 @@ for i,d in enumerate(history[-5:][::-1]):
 if os.path.exists(PRED_FILE):
     last = json.load(open(PRED_FILE))
 
-    idx = last["target"]
+    idx = last.get("target", last.get("target_index"))
 
     if len(history) > idx:
 
