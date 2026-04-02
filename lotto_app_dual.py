@@ -9,17 +9,18 @@ import os
 from bs4 import BeautifulSoup
 from collections import Counter
 
-st.set_page_config(page_title="539 AI V68 正確預測版", layout="wide")
+st.set_page_config(page_title="539 AI V70 進化版", layout="wide")
 
 PERF_FILE = "performance.json"
 PRED_FILE = "prediction.json"
+WEIGHT_FILE = "weights.json"
 
 # ==============================
 # 抓資料
 # ==============================
 @st.cache_data(ttl=10800)
 def load_history():
-    target = 1770
+    target = 600
     headers = {"User-Agent": "Mozilla/5.0"}
     all_data = []
     page = 1
@@ -50,6 +51,21 @@ def load_history():
     return all_data[:target][::-1]
 
 # ==============================
+# 市場判斷
+# ==============================
+def detect_market(history):
+    last20 = history[-20:]
+    nums = [n for d in last20 for n in d]
+    avg = np.mean(nums)
+
+    if avg > 23:
+        return "熱盤"
+    elif avg < 17:
+        return "冷盤"
+    else:
+        return "均衡"
+
+# ==============================
 # 策略
 # ==============================
 def strategy_trend(history):
@@ -63,121 +79,119 @@ def strategy_cold(history):
     cold = sorted(range(1,40), key=lambda x: freq[x])[:15]
     return random.sample(cold,5)
 
-def strategy_random():
-    return sorted(random.sample(range(1,40),5))
+def strategy_mutation(history):
+    pool = list(range(1,40))
+    return sorted(random.sample(pool,5))
 
 # ==============================
-# 融合
+# 權重
 # ==============================
-def combine(s1, s2, s3):
+def load_weights():
+    if os.path.exists(WEIGHT_FILE):
+        return json.load(open(WEIGHT_FILE))
+    return {"trend":1.0,"cold":1.0,"mutate":1.0}
+
+def save_weights(w):
+    json.dump(w, open(WEIGHT_FILE,"w"))
+
+# ==============================
+# 融合（市場適應）
+# ==============================
+def combine(s1,s2,s3,w,market):
     score = Counter()
 
-    for n in s1: score[n] += 1.2
-    for n in s2: score[n] += 1.0
-    for n in s3: score[n] += 0.8
+    # 市場影響
+    if market == "熱盤":
+        w["cold"] *= 1.2
+        w["trend"] *= 0.9
+    elif market == "冷盤":
+        w["trend"] *= 1.2
+
+    for n in s1: score[n]+=w["trend"]
+    for n in s2: score[n]+=w["cold"]
+    for n in s3: score[n]+=w["mutate"]
 
     return sorted([n for n,_ in score.most_common(5)])
 
 # ==============================
-# 檔案操作
+# 評估
 # ==============================
-def load_json(file):
-    if os.path.exists(file):
-        return json.load(open(file))
-    return None
-
-def save_json(file, data):
-    json.dump(data, open(file,"w"))
-
-# ==============================
-# 命中計算
-# ==============================
-def evaluate(bets, draw):
-    res = []
-    for b in bets:
-        hit = len(set(b) & set(draw))
-        res.append(hit)
-    return res
+def evaluate(pred, draw):
+    return len(set(pred)&set(draw))
 
 # ==============================
 # UI
 # ==============================
-st.title("🔥 539 AI V68（正確預測系統）")
+st.title("🔥 539 AI V70（策略進化系統）")
 
 history = load_history()
+weights = load_weights()
+market = detect_market(history)
 
-# 顯示最新五期
+st.write(f"📊 市場狀態：{market}")
+st.write("⚙️ 權重：", weights)
+
+# 最新五期
 st.subheader("📅 最新五期")
 cols = st.columns(5)
 for i,d in enumerate(history[-5:][::-1]):
     cols[i].code(" ".join(f"{x:02d}" for x in d))
 
 # ==============================
-# ⭐ 先做「上一期預測驗證」
+# 驗證
 # ==============================
-last_pred = load_json(PRED_FILE)
-perf = load_json(PERF_FILE) or []
+if os.path.exists(PRED_FILE):
+    last = json.load(open(PRED_FILE))
 
-if last_pred:
-    target_index = last_pred["target_index"]
+    idx = last["target"]
 
-    if len(history) > target_index:
-        draw = history[target_index]
+    if len(history) > idx:
 
-        hits = evaluate(last_pred["bets"], draw)
+        draw = history[idx]
 
-        perf.append({
-            "期數": target_index,
-            "開獎": draw,
-            "命中": hits
-        })
+        hit_t = evaluate(last["trend"], draw)
+        hit_c = evaluate(last["cold"], draw)
+        hit_m = evaluate(last["mutate"], draw)
 
-        save_json(PERF_FILE, perf)
+        # 🔥 指數學習
+        weights["trend"] *= (1 + (hit_t-1)*0.15)
+        weights["cold"] *= (1 + (hit_c-1)*0.15)
+        weights["mutate"] *= (1 + (hit_m-1)*0.15)
+
+        # 淘汰機制
+        for k in weights:
+            if weights[k] < 0.3:
+                weights[k] = 0.5  # 重生
+
+        save_weights(weights)
         os.remove(PRED_FILE)
 
-        st.success(f"✅ 已驗證上一期 → 命中 {hits}")
+        st.success(f"命中 → 趨勢:{hit_t} 冷門:{hit_c} 變異:{hit_m}")
 
 # ==============================
-# 顯示績效
+# 預測
 # ==============================
-if perf:
-    df = pd.DataFrame(perf)
-
-    st.subheader("📊 歷史績效")
-    st.dataframe(df.tail(20))
-
-    avg_hit = np.mean([np.mean(x) for x in df["命中"]])
-    st.metric("平均命中", f"{avg_hit:.2f}")
-
-# ==============================
-# AI預測
-# ==============================
-if st.button("🚀 AI預測下一期"):
+if st.button("🚀 AI進化預測"):
 
     s1 = strategy_trend(history)
     s2 = strategy_cold(history)
-    s3 = strategy_random()
+    s3 = strategy_mutation(history)
 
-    final = combine(s1, s2, s3)
+    final = combine(s1,s2,s3,weights.copy(),market)
 
-    bet1 = final
-    bet2 = sorted(random.sample(range(1,40),5))
+    st.subheader("💰 推薦號碼")
+    st.success(" - ".join(f"{n:02d}" for n in final))
 
-    st.subheader("💰 投資組合（下一期）")
-    st.success(" - ".join(f"{n:02d}" for n in bet1))
-    st.success(" - ".join(f"{n:02d}" for n in bet2))
+    json.dump({
+        "trend":s1,
+        "cold":s2,
+        "mutate":s3,
+        "target":len(history)
+    }, open(PRED_FILE,"w"))
 
-    # ⭐ 存預測（重點）
-    save_json(PRED_FILE, {
-        "bets": [bet1, bet2],
-        "target_index": len(history)   # 下一期
-    })
+    st.info("📌 已進入下一期學習")
 
-    st.info("📌 已記錄預測，等下一期開獎自動驗證")
-
-# ==============================
 # 重抓
-# ==============================
 if st.button("🔄 重抓資料"):
     st.cache_data.clear()
     st.rerun()
