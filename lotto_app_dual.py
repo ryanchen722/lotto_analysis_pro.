@@ -9,7 +9,7 @@ import os
 from bs4 import BeautifulSoup
 from collections import Counter
 
-st.set_page_config(page_title="539 AI V70 進化版", layout="wide")
+st.set_page_config(page_title="539 AI V70.5 防卡死版", layout="wide")
 
 PERF_FILE = "performance.json"
 PRED_FILE = "prediction.json"
@@ -71,17 +71,16 @@ def detect_market(history):
 def strategy_trend(history):
     last30 = history[-30:]
     freq = Counter([n for d in last30 for n in d])
-    return [n for n,_ in freq.most_common(5)]
+    return [n for n,_ in freq.most_common(10)]  # 🔥改成10個
 
 def strategy_cold(history):
     last50 = history[-50:]
     freq = Counter([n for d in last50 for n in d])
-    cold = sorted(range(1,40), key=lambda x: freq[x])[:15]
-    return random.sample(cold,5)
+    cold = sorted(range(1,40), key=lambda x: freq[x])[:20]
+    return cold
 
 def strategy_mutation(history):
-    pool = list(range(1,40))
-    return sorted(random.sample(pool,5))
+    return list(range(1,40))  # 全池
 
 # ==============================
 # 權重
@@ -95,23 +94,50 @@ def save_weights(w):
     json.dump(w, open(WEIGHT_FILE,"w"))
 
 # ==============================
-# 融合（市場適應）
+# 🔥 核心：防卡死融合
 # ==============================
-def combine(s1,s2,s3,w,market):
+def combine(s1, s2, s3, weights, market):
+
     score = Counter()
 
     # 市場影響
+    w = weights.copy()
     if market == "熱盤":
         w["cold"] *= 1.2
-        w["trend"] *= 0.9
     elif market == "冷盤":
         w["trend"] *= 1.2
 
-    for n in s1: score[n]+=w["trend"]
-    for n in s2: score[n]+=w["cold"]
-    for n in s3: score[n]+=w["mutate"]
+    # 分數累加
+    for n in s1:
+        score[n] += w["trend"]
+    for n in s2:
+        score[n] += w["cold"]
+    for n in s3:
+        score[n] += w["mutate"] * 0.3  # mutation較弱
 
-    return sorted([n for n,_ in score.most_common(5)])
+    # 👉 機率抽樣（核心）
+    nums = list(score.keys())
+    vals = np.array(list(score.values()), dtype=float)
+
+    # 防爆
+    vals = np.maximum(vals, 0.01)
+
+    probs = vals / vals.sum()
+
+    picks = set()
+
+    # 🔥 探索機制
+    explore_rate = 0.2
+
+    while len(picks) < 5:
+
+        if random.random() < explore_rate:
+            picks.add(random.randint(1,39))
+        else:
+            choice = np.random.choice(nums, p=probs)
+            picks.add(int(choice))
+
+    return sorted(picks)
 
 # ==============================
 # 評估
@@ -122,7 +148,7 @@ def evaluate(pred, draw):
 # ==============================
 # UI
 # ==============================
-st.title("🔥 539 AI V70（策略進化系統）")
+st.title("🔥 539 AI V70.5（防卡死進化版）")
 
 history = load_history()
 weights = load_weights()
@@ -145,7 +171,7 @@ if os.path.exists(PRED_FILE):
 
     idx = last.get("target", last.get("target_index"))
 
-    if len(history) > idx:
+    if idx is not None and len(history) > idx:
 
         draw = history[idx]
 
@@ -158,10 +184,10 @@ if os.path.exists(PRED_FILE):
         weights["cold"] *= (1 + (hit_c-1)*0.15)
         weights["mutate"] *= (1 + (hit_m-1)*0.15)
 
-        # 淘汰機制
+        # 正規化（避免爆掉）
+        total = sum(weights.values())
         for k in weights:
-            if weights[k] < 0.3:
-                weights[k] = 0.5  # 重生
+            weights[k] = weights[k] / total * 3
 
         save_weights(weights)
         os.remove(PRED_FILE)
@@ -177,15 +203,15 @@ if st.button("🚀 AI進化預測"):
     s2 = strategy_cold(history)
     s3 = strategy_mutation(history)
 
-    final = combine(s1,s2,s3,weights.copy(),market)
+    final = combine(s1, s2, s3, weights, market)
 
     st.subheader("💰 推薦號碼")
     st.success(" - ".join(f"{n:02d}" for n in final))
 
     json.dump({
-        "trend":s1,
-        "cold":s2,
-        "mutate":s3,
+        "trend":random.sample(s1,5),
+        "cold":random.sample(s2,5),
+        "mutate":random.sample(s3,5),
         "target":len(history)
     }, open(PRED_FILE,"w"))
 
