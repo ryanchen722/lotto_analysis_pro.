@@ -9,9 +9,10 @@ import os
 from bs4 import BeautifulSoup
 from collections import Counter
 
-st.set_page_config(page_title="539 AI V71.5 穩定版", layout="wide")
+st.set_page_config(page_title="539 AI V72 投資系統", layout="wide")
 
-PERF_FILE = "perf_v71_5.json"
+PERF_FILE = "perf_v72.json"
+STATE_FILE = "state_v72.json"
 
 # ==============================
 # 抓資料
@@ -51,82 +52,64 @@ def load_history():
 # ==============================
 # 工具
 # ==============================
-def load_json(file):
+def load_json(file, default):
     if os.path.exists(file):
         return json.load(open(file))
-    return []
+    return default
 
 def save_json(file, data):
     json.dump(data, open(file,"w"), indent=2)
 
 # ==============================
-# 🧠 市場判斷（核心）
+# 簡單模型
 # ==============================
-def detect_mode(history):
-
-    last20 = history[-20:]
-    nums = [n for d in last20 for n in d]
-    avg = np.mean(nums)
-
-    if avg > 23:
-        return "追冷"
-    elif avg < 17:
-        return "追熱"
-    else:
-        return "平衡"
-
-# ==============================
-# 🧠 核心評分（修正版🔥）
-# ==============================
-def score_numbers(history, mode):
+def score_numbers(history):
 
     scores = {}
     freq = Counter([n for d in history[-30:] for n in d])
 
     for n in range(1,40):
-
         gap = next((i for i,d in enumerate(reversed(history)) if n in d),50)
-
-        if mode == "追冷":
-            score = gap * 1.2 - freq[n]*0.5
-
-        elif mode == "追熱":
-            score = freq[n]*1.2 - gap*0.5
-
-        else:  # 平衡
-            score = freq[n]*0.8 + gap*0.8
-
-        scores[n] = max(0.1, score)
+        scores[n] = freq[n] + gap/10
 
     return scores
 
-# ==============================
-# 選號（機率抽樣）
-# ==============================
 def pick_numbers(scores):
-
-    nums = np.array(list(scores.keys()))
-    vals = np.array(list(scores.values()))
-    vals = vals / vals.sum()
-
-    picks = set()
-
-    while len(picks) < 5:
-        picks.add(int(np.random.choice(nums, p=vals)))
-
-    return sorted(picks)
+    nums = sorted(scores, key=scores.get, reverse=True)
+    return sorted(nums[:5])
 
 # ==============================
-# 是否下注（關鍵🔥）
+# 信心計算
 # ==============================
-def should_bet(perf):
+def calc_confidence(perf):
 
     if len(perf) < 10:
-        return False
+        return 0.5
 
-    avg = np.mean([p["hit"] for p in perf[-10:]])
+    last10 = perf[-10:]
+    avg_hit = np.mean([p["hit"] for p in last10])
 
-    return avg > 0.7
+    # 轉換成信心值
+    return min(avg_hit, 1.2)
+
+# ==============================
+# 下注策略
+# ==============================
+def decide_bet(conf, lose_streak):
+
+    if lose_streak >= 5:
+        return "STOP", 0
+
+    if conf < 0.6:
+        return "SKIP", 0
+    elif conf < 0.7:
+        return "OBSERVE", 0
+    elif conf < 0.8:
+        return "SMALL", 50
+    elif conf < 1.0:
+        return "NORMAL", 100
+    else:
+        return "AGGRESSIVE", 150
 
 # ==============================
 # 評估
@@ -137,14 +120,12 @@ def evaluate(pred, draw):
 # ==============================
 # UI
 # ==============================
-st.title("🔥 539 AI V71.5（穩定策略版）")
+st.title("🔥 539 AI V72（下注強度系統）")
 
 history = load_history()
-perf = load_json(PERF_FILE)
 
-mode = detect_mode(history)
-
-st.write(f"📊 當前模式：{mode}")
+perf = load_json(PERF_FILE, [])
+state = load_json(STATE_FILE, {"lose_streak":0})
 
 # 最新五期
 st.subheader("📅 最新五期")
@@ -153,62 +134,92 @@ for i,d in enumerate(history[-5:][::-1]):
     cols[i].code(" ".join(map(str,d)))
 
 # ==============================
-# 顯示績效
+# 信心
 # ==============================
-if perf:
-    df = pd.DataFrame(perf)
-    st.subheader("📊 績效")
-    st.dataframe(df.tail(20))
-    st.metric("平均命中", f"{df['hit'].mean():.2f}")
+conf = calc_confidence(perf)
+
+st.subheader("🧠 模型狀態")
+st.metric("信心分數", f"{conf:.2f}")
+st.write(f"連輸次數：{state['lose_streak']}")
+
+mode, amount = decide_bet(conf, state["lose_streak"])
+
+st.subheader("🎯 建議策略")
+
+if mode == "STOP":
+    st.error("❌ 停手（連輸過多）")
+elif mode == "SKIP":
+    st.warning("⚠️ 不下注")
+elif mode == "OBSERVE":
+    st.info("👀 觀察期")
+elif mode == "SMALL":
+    st.success("💰 小注 50 元")
+elif mode == "NORMAL":
+    st.success("💰 正常下注 100 元")
+else:
+    st.success("🚀 加碼 150 元")
 
 # ==============================
 # 預測
 # ==============================
-if st.button("🚀 AI預測"):
+if st.button("🚀 產生號碼"):
 
-    if not should_bet(perf):
-        st.warning("⚠️ 模型狀態不佳 → 建議不下注")
-    else:
-        scores = score_numbers(history, mode)
+    scores = score_numbers(history)
 
-        bet1 = pick_numbers(scores)
-        bet2 = pick_numbers(scores)
+    bet1 = pick_numbers(scores)
+    bet2 = sorted(random.sample(range(1,40),5))
 
-        st.subheader("💰 投資組合")
-        st.success(" - ".join(f"{n:02d}" for n in bet1))
-        st.success(" - ".join(f"{n:02d}" for n in bet2))
+    st.subheader("🎯 號碼")
+    st.write("主注：", bet1)
+    st.write("副注：", bet2)
 
-        # 存等待驗證
-        st.session_state["last_bets"] = [bet1, bet2]
-        st.session_state["bet_index"] = len(history)
+    st.session_state["bets"] = [bet1, bet2]
+    st.session_state["index"] = len(history)
 
 # ==============================
-# 驗證（下一期）
+# 驗證
 # ==============================
-if "last_bets" in st.session_state:
+if "bets" in st.session_state:
 
-    idx = st.session_state["bet_index"]
+    idx = st.session_state["index"]
 
     if len(history) > idx:
 
         draw = history[idx]
 
         hits = []
-        for b in st.session_state["last_bets"]:
+        for b in st.session_state["bets"]:
             hits.append(evaluate(b, draw))
 
+        # 存績效
         for h in hits:
             perf.append({"draw": draw, "hit": h})
 
         save_json(PERF_FILE, perf)
 
-        del st.session_state["last_bets"]
+        # 更新連輸
+        if max(hits) < 2:
+            state["lose_streak"] += 1
+        else:
+            state["lose_streak"] = 0
 
-        st.success(f"✅ 本期命中：{hits}")
+        save_json(STATE_FILE, state)
+
+        del st.session_state["bets"]
+
+        st.success(f"✅ 命中：{hits}")
 
 # ==============================
+# 顯示績效
+# ==============================
+if perf:
+    df = pd.DataFrame(perf)
+    st.subheader("📊 績效")
+    st.dataframe(df.tail(20))
+
+    st.metric("平均命中", f"{df['hit'].mean():.2f}")
+
 # 重抓
-# ==============================
 if st.button("🔄 重抓資料"):
     st.cache_data.clear()
     st.rerun()
