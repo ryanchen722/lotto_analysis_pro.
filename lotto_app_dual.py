@@ -9,11 +9,10 @@ import os
 from bs4 import BeautifulSoup
 from collections import Counter
 
-st.set_page_config(page_title="539 AI V70.5 防卡死版", layout="wide")
+st.set_page_config(page_title="539 AI V71 投資版", layout="wide")
 
-PERF_FILE = "performance.json"
-PRED_FILE = "prediction.json"
-WEIGHT_FILE = "weights.json"
+PERF_FILE = "perf_v71.json"
+STATE_FILE = "state_v71.json"
 
 # ==============================
 # 抓資料
@@ -51,173 +50,159 @@ def load_history():
     return all_data[:target][::-1]
 
 # ==============================
-# 市場判斷
+# 工具
 # ==============================
-def detect_market(history):
-    last20 = history[-20:]
-    nums = [n for d in last20 for n in d]
-    avg = np.mean(nums)
+def load_json(file, default):
+    if os.path.exists(file):
+        return json.load(open(file))
+    return default
 
-    if avg > 23:
-        return "熱盤"
-    elif avg < 17:
-        return "冷盤"
-    else:
-        return "均衡"
+def save_json(file, data):
+    json.dump(data, open(file,"w"), indent=2)
 
 # ==============================
-# 策略
+# 簡單模型
 # ==============================
-def strategy_trend(history):
-    last30 = history[-30:]
-    freq = Counter([n for d in last30 for n in d])
-    return [n for n,_ in freq.most_common(10)]  # 🔥改成10個
+def get_scores(history):
+    freq = Counter([n for d in history[-30:] for n in d])
+    scores = {}
 
-def strategy_cold(history):
-    last50 = history[-50:]
-    freq = Counter([n for d in last50 for n in d])
-    cold = sorted(range(1,40), key=lambda x: freq[x])[:20]
-    return cold
+    for n in range(1,40):
+        gap = next((i for i,d in enumerate(reversed(history)) if n in d),50)
+        scores[n] = freq[n] + gap/10
 
-def strategy_mutation(history):
-    return list(range(1,40))  # 全池
+    return scores
 
-# ==============================
-# 權重
-# ==============================
-def load_weights():
-    if os.path.exists(WEIGHT_FILE):
-        return json.load(open(WEIGHT_FILE))
-    return {"trend":1.0,"cold":1.0,"mutate":1.0}
+def pick_numbers(scores):
+    nums = sorted(scores, key=scores.get, reverse=True)
+    return sorted(nums[:5])
 
-def save_weights(w):
-    json.dump(w, open(WEIGHT_FILE,"w"))
+def pick_random():
+    return sorted(random.sample(range(1,40),5))
 
 # ==============================
-# 🔥 核心：防卡死融合
+# 投資策略
 # ==============================
-def combine(s1, s2, s3, weights, market):
+def should_bet(perf):
 
-    score = Counter()
+    if len(perf) < 10:
+        return True
 
-    # 市場影響
-    w = weights.copy()
-    if market == "熱盤":
-        w["cold"] *= 1.2
-    elif market == "冷盤":
-        w["trend"] *= 1.2
+    last10 = perf[-10:]
+    avg_hit = np.mean([np.mean(p["hit"]) for p in last10])
 
-    # 分數累加
-    for n in s1:
-        score[n] += w["trend"]
-    for n in s2:
-        score[n] += w["cold"]
-    for n in s3:
-        score[n] += w["mutate"] * 0.3  # mutation較弱
+    return avg_hit > 0.6
 
-    # 👉 機率抽樣（核心）
-    nums = list(score.keys())
-    vals = np.array(list(score.values()), dtype=float)
+def calculate_roi(perf):
 
-    # 防爆
-    vals = np.maximum(vals, 0.01)
+    money = 0
+    cost = 0
 
-    probs = vals / vals.sum()
+    for p in perf:
+        for h in p["hit"]:
+            if h == 2:
+                money += 50
+            elif h == 3:
+                money += 500
+            elif h >= 4:
+                money += 20000
+            cost += 50
 
-    picks = set()
-
-    # 🔥 探索機制
-    explore_rate = 0.2
-
-    while len(picks) < 5:
-
-        if random.random() < explore_rate:
-            picks.add(random.randint(1,39))
-        else:
-            choice = np.random.choice(nums, p=probs)
-            picks.add(int(choice))
-
-    return sorted(picks)
-
-# ==============================
-# 評估
-# ==============================
-def evaluate(pred, draw):
-    return len(set(pred)&set(draw))
+    return money - cost
 
 # ==============================
 # UI
 # ==============================
-st.title("🔥 539 AI V70.5（防卡死進化版）")
+st.title("🔥 539 AI V71（下注策略系統）")
 
 history = load_history()
-weights = load_weights()
-market = detect_market(history)
-
-st.write(f"📊 市場狀態：{market}")
-st.write("⚙️ 權重：", weights)
+perf = load_json(PERF_FILE, [])
+state = load_json(STATE_FILE, {"lose_streak":0})
 
 # 最新五期
 st.subheader("📅 最新五期")
 cols = st.columns(5)
 for i,d in enumerate(history[-5:][::-1]):
-    cols[i].code(" ".join(f"{x:02d}" for x in d))
+    cols[i].code(" ".join(map(str,d)))
 
-# ==============================
-# 驗證
-# ==============================
-if os.path.exists(PRED_FILE):
-    last = json.load(open(PRED_FILE))
+# 顯示狀態
+st.subheader("🧠 當前狀態")
+st.write(f"連輸次數：{state['lose_streak']}")
 
-    idx = last.get("target", last.get("target_index"))
+if perf:
+    avg_hit = np.mean([np.mean(p["hit"]) for p in perf])
+    st.metric("平均命中", f"{avg_hit:.2f}")
 
-    if idx is not None and len(history) > idx:
-
-        draw = history[idx]
-
-        hit_t = evaluate(last["trend"], draw)
-        hit_c = evaluate(last["cold"], draw)
-        hit_m = evaluate(last["mutate"], draw)
-
-        # 🔥 指數學習
-        weights["trend"] *= (1 + (hit_t-1)*0.15)
-        weights["cold"] *= (1 + (hit_c-1)*0.15)
-        weights["mutate"] *= (1 + (hit_m-1)*0.15)
-
-        # 正規化（避免爆掉）
-        total = sum(weights.values())
-        for k in weights:
-            weights[k] = weights[k] / total * 3
-
-        save_weights(weights)
-        os.remove(PRED_FILE)
-
-        st.success(f"命中 → 趨勢:{hit_t} 冷門:{hit_c} 變異:{hit_m}")
+    roi = calculate_roi(perf)
+    st.metric("總收益", f"{roi} 元")
 
 # ==============================
 # 預測
 # ==============================
-if st.button("🚀 AI進化預測"):
+if st.button("🚀 AI下注決策"):
 
-    s1 = strategy_trend(history)
-    s2 = strategy_cold(history)
-    s3 = strategy_mutation(history)
+    bet_flag = should_bet(perf)
 
-    final = combine(s1, s2, s3, weights, market)
+    if state["lose_streak"] >= 5:
+        st.error("❌ 連輸過多 → 停手")
+        bet_flag = False
 
-    st.subheader("💰 推薦號碼")
-    st.success(" - ".join(f"{n:02d}" for n in final))
+    if not bet_flag:
+        st.warning("⚠️ 本期建議不下注")
+    else:
+        scores = get_scores(history)
 
-    json.dump({
-        "trend":random.sample(s1,5),
-        "cold":random.sample(s2,5),
-        "mutate":random.sample(s3,5),
-        "target":len(history)
-    }, open(PRED_FILE,"w"))
+        main = pick_numbers(scores)
+        sub = pick_random()
 
-    st.info("📌 已進入下一期學習")
+        st.subheader("💰 投資組合（100元）")
 
+        st.success(f"主注（70元）：{' - '.join(map(str,main))}")
+        st.success(f"副注（30元）：{' - '.join(map(str,sub))}")
+
+        save_json("last_bet.json", {
+            "bets":[main,sub],
+            "target": len(history)
+        })
+
+# ==============================
+# 驗證
+# ==============================
+if os.path.exists("last_bet.json"):
+
+    last = json.load(open("last_bet.json"))
+    idx = last["target"]
+
+    if len(history) > idx:
+
+        draw = history[idx]
+
+        hits = []
+        for b in last["bets"]:
+            hits.append(len(set(b)&set(draw)))
+
+        perf.append({
+            "draw": draw,
+            "hit": hits
+        })
+
+        save_json(PERF_FILE, perf)
+
+        # 更新連輸
+        if max(hits) < 2:
+            state["lose_streak"] += 1
+        else:
+            state["lose_streak"] = 0
+
+        save_json(STATE_FILE, state)
+
+        os.remove("last_bet.json")
+
+        st.success(f"✅ 本期命中：{hits}")
+
+# ==============================
 # 重抓
+# ==============================
 if st.button("🔄 重抓資料"):
     st.cache_data.clear()
     st.rerun()
