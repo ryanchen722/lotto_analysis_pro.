@@ -1,66 +1,36 @@
 import streamlit as st
 import pandas as pd
 import os
+import numpy as np
 from datetime import datetime
 
 TRADE_FILE = "trades.csv"
-SIGNAL_FILE = "signals.csv"
 
-st.title("📊 台股 V4-C（資料庫 + 回測系統）")
-
-# =========================
-# 🧠 1. 台股 Signal（模型輸入）
-# =========================
-st.header("🧠 輸入台股模型資料")
-
-symbol = st.text_input("股票代號", "2330")
-close = st.number_input("收盤價", value=500.0)
-score = st.slider("模型 Score", 0, 100, 75)
-
-signal = "BUY" if score > 70 else "PASS"
-
-if st.button("存入 Signal"):
-
-    new_signal = {
-        "date": datetime.now(),
-        "symbol": symbol,
-        "close": close,
-        "score": score,
-        "signal": signal
-    }
-
-    if os.path.exists(SIGNAL_FILE):
-        df = pd.read_csv(SIGNAL_FILE)
-        df = pd.concat([df, pd.DataFrame([new_signal])], ignore_index=True)
-    else:
-        df = pd.DataFrame([new_signal])
-
-    df.to_csv(SIGNAL_FILE, index=False)
-    st.success("✅ Signal 已存入")
-
-st.write("📢 建議：", signal)
+st.title("📊 V5 量化回測引擎（Equity + Risk）")
 
 # =========================
-# 💰 2. 交易紀錄
+# 💰 交易輸入
 # =========================
-st.header("💰 手動交易紀錄")
+st.header("💰 新增交易")
 
-shares = st.number_input("股數", min_value=1, value=10)
-entry = st.number_input("進場價", value=500.0)
-stop = st.number_input("停損", value=480.0)
-tp = st.number_input("停利", value=550.0)
+symbol = st.text_input("股票", "2330.TW")
+shares = st.number_input("股數", 1, 1000, 10)
+entry = st.number_input("進場價", 500.0)
+exit_price = st.number_input("出場價", 550.0)
+score = st.slider("Score", 0, 100, 70)
 
 if st.button("存入交易"):
+
+    pnl = (exit_price - entry) * shares
 
     trade = {
         "time": datetime.now(),
         "symbol": symbol,
         "shares": shares,
         "entry": entry,
-        "stop": stop,
-        "tp": tp,
+        "exit": exit_price,
         "score": score,
-        "status": "OPEN"
+        "pnl": pnl
     }
 
     if os.path.exists(TRADE_FILE):
@@ -70,37 +40,51 @@ if st.button("存入交易"):
         df = pd.DataFrame([trade])
 
     df.to_csv(TRADE_FILE, index=False)
-    st.success("✅ 交易已存")
+    st.success("已存入")
 
 # =========================
-# 📊 3. 資料庫查看
+# 📊 回測核心
 # =========================
-st.header("📊 Signal 資料庫")
-
-if os.path.exists(SIGNAL_FILE):
-    df = pd.read_csv(SIGNAL_FILE)
-    st.dataframe(df)
-
-    st.subheader("Score 分布")
-    st.bar_chart(df["score"])
-
-# =========================
-# 🔥 4. 回測（核心）
-# =========================
-st.header("🔥 簡易回測")
+st.header("📊 回測分析（V5核心）")
 
 if os.path.exists(TRADE_FILE):
+
     df = pd.read_csv(TRADE_FILE)
 
-    df["pnl"] = (df["tp"] - df["entry"]) * df["shares"]
-    df["win"] = df["pnl"] > 0
+    # =========================
+    # 📈 Equity Curve
+    # =========================
+    df["equity"] = df["pnl"].cumsum() + 100000  # 初始資金10萬
 
-    st.write("交易數量：", len(df))
-    st.write("勝率：", round(df["win"].mean() * 100, 2), "%")
-    st.write("總損益：", round(df["pnl"].sum(), 2))
+    st.subheader("📈 資金曲線")
+    st.line_chart(df["equity"])
 
-    st.subheader("P/L 分布")
-    st.bar_chart(df["pnl"])
+    # =========================
+    # 📉 最大回撤
+    # =========================
+    df["peak"] = df["equity"].cummax()
+    df["drawdown"] = df["equity"] - df["peak"]
+
+    max_dd = df["drawdown"].min()
+
+    st.write("📉 最大回撤：", round(max_dd, 2))
+
+    # =========================
+    # 📊 勝率
+    # =========================
+    win_rate = (df["pnl"] > 0).mean()
+
+    st.write("📊 勝率：", round(win_rate * 100, 2), "%")
+    st.write("💰 總損益：", round(df["pnl"].sum(), 2))
+
+    # =========================
+    # 📊 Score 分析
+    # =========================
+    st.subheader("🧠 Score vs 報酬")
+
+    st.scatter_chart(df[["score", "pnl"]])
+
+    st.dataframe(df)
 
 else:
     st.info("尚無交易資料")
