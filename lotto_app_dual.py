@@ -1,169 +1,102 @@
-import random
 import streamlit as st
-import requests
-import re
+import yfinance as yf
+import pandas as pd
 import numpy as np
-import json
-import os
-from bs4 import BeautifulSoup
-from collections import Counter
 
-st.set_page_config(page_title="539 AI 實用版", layout="wide")
+st.set_page_config(page_title="股票 AI 分析系統", layout="wide")
 
-WEIGHT_FILE = "weights_clean.json"
-PRED_FILE = "pred_clean.json"
+# ==============================
+# 股票池（你可以自己改）
+# ==============================
+stocks = [
+    "AAPL","MSFT","NVDA","TSLA","META",
+    "GOOGL","AMZN","AMD","NFLX","INTC"
+]
 
 # ==============================
 # 抓資料
 # ==============================
-@st.cache_data(ttl=10800)
-def load_history():
-    target = 600
-    headers = {"User-Agent": "Mozilla/5.0"}
-    data = []
-    page = 1
-
-    while len(data) < target:
-        url = f"https://www.pilio.idv.tw/lto539/list.asp?indexpage={page}"
-        try:
-            r = requests.get(url, headers=headers, timeout=10)
-            r.encoding = "big5"
-            soup = BeautifulSoup(r.text, "lxml")
-
-            rows = soup.find_all("tr")
-
-            for row in rows:
-                nums = re.findall(r'\b\d{1,2}\b', row.text)
-                nums = [int(x) for x in nums if 1 <= int(x) <= 39]
-
-                if len(nums) >= 5:
-                    data.append(sorted(nums[-5:]))
-
-            page += 1
-        except:
-            page += 1
-
-    return data[:target][::-1]
+@st.cache_data(ttl=3600)
+def load_data(ticker):
+    df = yf.download(ticker, period="3mo", interval="1d")
+    return df
 
 # ==============================
-# 權重
+# 核心評分
 # ==============================
-def load_weights():
-    if os.path.exists(WEIGHT_FILE):
-        return json.load(open(WEIGHT_FILE))
-    return {"freq":1.0, "gap":1.0, "decay":1.0}
+def calc_score(df):
 
-def save_weights(w):
-    json.dump(w, open(WEIGHT_FILE,"w"))
+    df = df.copy()
 
-# ==============================
-# 分數（核心）
-# ==============================
-def score_numbers(history, w):
+    # 近期漲幅（動量）
+    ret_5 = df["Close"].pct_change(5).iloc[-1]
+    ret_20 = df["Close"].pct_change(20).iloc[-1]
 
-    freq = Counter([n for d in history[-30:] for n in d])
-    scores = {}
+    # 波動（風險）
+    vol = df["Close"].pct_change().std()
 
-    for n in range(1,40):
+    # 成交量變化
+    vol_change = df["Volume"].pct_change(5).iloc[-1]
 
-        gap = next((i for i,d in enumerate(reversed(history)) if n in d),50)
+    # score（你可以調整）
+    score = (
+        ret_5 * 2 +
+        ret_20 * 1.5 +
+        vol_change * 0.5 -
+        vol * 1
+    )
 
-        decay = 0
-        for i,d in enumerate(reversed(history[-50:])):
-            if n in d:
-                decay += 1/(i+1)
-
-        score = (
-            freq[n]*w["freq"] +
-            gap*w["gap"] +
-            decay*w["decay"]
-        )
-
-        scores[n] = score
-
-    return scores
-
-# ==============================
-# 選號（不固定🔥）
-# ==============================
-def pick_numbers(scores):
-
-    nums = list(scores.keys())
-    vals = np.array(list(scores.values()))
-
-    # 防止全部一樣
-    vals = vals + np.random.rand(len(vals))*0.01
-
-    probs = vals / vals.sum()
-
-    picks = set()
-
-    while len(picks) < 5:
-        picks.add(int(np.random.choice(nums, p=probs)))
-
-    return sorted(picks)
-
-# ==============================
-# 學習
-# ==============================
-def learn(weights, hits):
-
-    avg = np.mean(hits)
-
-    if avg < 1:
-        weights["gap"] *= 1.1
-    else:
-        weights["freq"] *= 1.05
-
-    return weights
+    return score, ret_5, ret_20
 
 # ==============================
 # UI
 # ==============================
-st.title("🔥 539 AI（實用進化版）")
+st.title("📈 股票 AI 分析系統（簡化實戰版）")
 
-history = load_history()
-weights = load_weights()
+results = []
 
-st.write("📊 權重：", weights)
+for s in stocks:
+    df = load_data(s)
 
-# 最新五期
-st.subheader("📅 最新五期")
-cols = st.columns(5)
-for i,d in enumerate(history[-5:][::-1]):
-    cols[i].code(" ".join(map(str,d)))
+    if len(df) < 30:
+        continue
 
-# ==============================
-# 預測
-# ==============================
-if st.button("🚀 AI選號"):
+    score, r5, r20 = calc_score(df)
 
-    scores = score_numbers(history, weights)
+    results.append({
+        "股票": s,
+        "Score": score,
+        "5日漲幅": r5,
+        "20日漲幅": r20
+    })
 
-    b1 = pick_numbers(scores)
-    b2 = pick_numbers(scores)
+df_res = pd.DataFrame(results)
 
-    st.subheader("💰 推薦號碼")
-    st.success(" - ".join(f"{n:02d}" for n in b1))
-    st.success(" - ".join(f"{n:02d}" for n in b2))
-
-    st.session_state["bets"] = [b1, b2]
-    st.session_state["idx"] = len(history)
+# 排序
+df_res = df_res.sort_values("Score", ascending=False)
 
 # ==============================
-# 學習（下一期）
+# 顯示
 # ==============================
-if "bets" in st.session_state:
+st.subheader("🏆 強勢股票排名")
 
-    if len(history) > st.session_state["idx"]:
+st.dataframe(df_res)
 
-        draw = history[st.session_state["idx"]]
+# Top 3
+top3 = df_res.head(3)
 
-        hits = [len(set(b)&set(draw)) for b in st.session_state["bets"]]
+st.subheader("🔥 推薦標的（Top 3）")
 
-        weights = learn(weights, hits)
-        save_weights(weights)
+for i, row in top3.iterrows():
+    st.success(f"{row['股票']} | Score: {row['Score']:.3f}")
 
-        del st.session_state["bets"]
+# ==============================
+# 單一股票分析
+# ==============================
+st.subheader("🔍 個股分析")
 
-        st.success(f"✅ 命中：{hits}")
+pick = st.selectbox("選一檔股票", stocks)
+
+df = load_data(pick)
+
+st.line_chart(df["Close"])
