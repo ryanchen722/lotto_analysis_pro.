@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 # =========================
-# 📌 股票池
+# 📌 股票池（可自行擴充）
 # =========================
 UNIVERSE = [
     "2330.TW","2317.TW","2454.TW","2382.TW",
@@ -15,9 +15,10 @@ UNIVERSE = [
 ]
 
 TRADE_FILE = "trades.csv"
+SIGNAL_FILE = "signals.csv"
 
 # =========================
-# 📊 抓資料（穩定版）
+# 📊 安全抓資料（重點🔥）
 # =========================
 def fetch_stock(symbol):
     try:
@@ -28,12 +29,15 @@ def fetch_stock(symbol):
 
         df = df.reset_index()
 
+        # 防 MultiIndex
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
-        df["收盤價"] = pd.to_numeric(df["Close"], errors="coerce")
-        df["股票代號"] = symbol
+        if "Close" not in df.columns:
+            return None
 
+        df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+        df["symbol"] = symbol
         df = df.dropna()
 
         return df
@@ -55,27 +59,27 @@ def fetch_all():
     return pd.concat(all_df, ignore_index=True)
 
 # =========================
-# 🧠 計算模型（中文欄位）
+# 🧠 Score 模型（穩定版）
 # =========================
 def calc_score(df):
     df = df.copy()
 
-    df["均線5日"] = df["收盤價"].rolling(5).mean()
-    df["均線20日"] = df["收盤價"].rolling(20).mean()
+    df["ma5"] = df["Close"].rolling(5).mean()
+    df["ma20"] = df["Close"].rolling(20).mean()
 
-    df["評分"] = 50 + (df["均線5日"] - df["均線20日"]) / df["均線20日"] * 100
-    df["評分"] = df["評分"].replace([np.inf, -np.inf], np.nan).fillna(50)
+    df["score"] = 50 + (df["ma5"] - df["ma20"]) / df["ma20"] * 100
+    df["score"] = df["score"].replace([np.inf, -np.inf], np.nan).fillna(50)
 
-    # 👉 訊號中文化（重點🔥）
+    # 🔥 訊號（合理化）
     def signal(x):
         if x > 70:
-            return "🟢 建議買進"
+            return "🟢 可考慮買進"
         elif x < 40:
-            return "🔴 建議賣出"
+            return "🔴 建議減碼/避開"
         else:
-            return "🟡 觀望（不交易）"
+            return "🟡 無明確優勢"
 
-    df["交易建議"] = df["評分"].apply(signal)
+    df["交易建議"] = df["score"].apply(signal)
 
     return df
 
@@ -83,87 +87,86 @@ def calc_score(df):
 # 📊 選股排序
 # =========================
 def scan(df):
-    latest = df.groupby("股票代號").tail(1)
-    return latest.sort_values("評分", ascending=False)
+    latest = df.groupby("symbol").tail(1)
+    return latest.sort_values("score", ascending=False)
 
 # =========================
 # 🚀 UI
 # =========================
-st.title("📊 V5-Stable 台股量化系統（中文完整版）")
-
-mode = st.sidebar.selectbox(
-    "功能選單",
-    ["📈 市場掃描", "💰 手動交易紀錄"]
-)
+st.title("📊 V5-Stable 台股量化系統（完整版）")
 
 # =========================
-# 📈 市場掃描
+# 📈 市場掃描（上半部）
 # =========================
-if mode == "📈 市場掃描":
+st.header("🧠 市場掃描")
 
-    st.header("🧠 台股掃描（中文化）")
+if st.button("開始掃描市場"):
 
-    if st.button("開始掃描"):
+    df = fetch_all()
 
-        df = fetch_all()
+    if df is None:
+        st.error("❌ 無法取得資料")
+        st.stop()
 
-        if df is None:
-            st.error("❌ 無法取得資料")
-            st.stop()
+    df = calc_score(df)
+    result = scan(df)
 
-        df = calc_score(df)
-        result = scan(df)
+    st.success("掃描完成")
 
-        st.success("掃描完成")
+    show = result[[
+        "symbol",
+        "Close",
+        "score",
+        "交易建議"
+    ]]
 
-        # 👉 中文欄位顯示
-        show = result[[
-            "股票代號",
-            "收盤價",
-            "評分",
-            "交易建議"
-        ]]
+    st.subheader("🔥 TOP 選股")
+    st.dataframe(show)
 
-        st.subheader("🔥 排行榜")
-        st.dataframe(show)
-
-        st.subheader("📢 建議操作")
-        st.dataframe(show)
+    # 存 signal
+    show.to_csv(SIGNAL_FILE, index=False)
 
 # =========================
-# 💰 手動交易（你要的功能保留🔥）
+# 💰 手動交易（永遠存在🔥）
 # =========================
-if mode == "💰 手動交易紀錄":
+st.header("💰 手動交易紀錄")
 
-    st.header("💰 手動建立交易")
+symbol = st.text_input("股票代號", "2330.TW")
+shares = st.number_input("股數", 1, 1000, 10)
+entry = st.number_input("進場價格", 500.0)
+stop = st.number_input("停損價格", 480.0)
+tp = st.number_input("停利價格", 550.0)
 
-    股票 = st.text_input("股票代號", "2330.TW")
-    股數 = st.number_input("買幾股", 1, 1000, 10)
-    進場價 = st.number_input("進場價格", 500.0)
-    停損 = st.number_input("停損價格", 480.0)
-    停利 = st.number_input("停利價格", 550.0)
+if st.button("儲存交易"):
 
-    if st.button("儲存交易"):
+    trade = {
+        "time": datetime.now(),
+        "symbol": symbol,
+        "shares": shares,
+        "entry": entry,
+        "stop": stop,
+        "tp": tp
+    }
 
-        trade = {
-            "時間": datetime.now(),
-            "股票代號": 股票,
-            "股數": 股數,
-            "進場價": 進場價,
-            "停損": 停損,
-            "停利": 停利
-        }
-
-        if os.path.exists(TRADE_FILE):
-            df = pd.read_csv(TRADE_FILE)
-            df = pd.concat([df, pd.DataFrame([trade])], ignore_index=True)
-        else:
-            df = pd.DataFrame([trade])
-
-        df.to_csv(TRADE_FILE, index=False)
-        st.success("已存入交易紀錄")
-
-    # 👉 顯示紀錄（保留！）
     if os.path.exists(TRADE_FILE):
-        st.subheader("📊 交易紀錄")
-        st.dataframe(pd.read_csv(TRADE_FILE))
+        df = pd.read_csv(TRADE_FILE)
+        df = pd.concat([df, pd.DataFrame([trade])], ignore_index=True)
+    else:
+        df = pd.DataFrame([trade])
+
+    df.to_csv(TRADE_FILE, index=False)
+    st.success("已存入交易紀錄")
+
+# =========================
+# 📊 交易紀錄顯示
+# =========================
+if os.path.exists(TRADE_FILE):
+    st.subheader("📊 交易紀錄")
+    st.dataframe(pd.read_csv(TRADE_FILE))
+
+# =========================
+# 📊 Signal 歷史
+# =========================
+if os.path.exists(SIGNAL_FILE):
+    st.subheader("📈 最近選股結果")
+    st.dataframe(pd.read_csv(SIGNAL_FILE))
