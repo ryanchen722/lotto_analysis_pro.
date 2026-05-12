@@ -1,221 +1,216 @@
+import random
 import streamlit as st
-import pandas as pd
+import requests
+import re
 import numpy as np
-import yfinance as yf
-import os
-from datetime import datetime
+import pandas as pd
+from bs4 import BeautifulSoup
+from collections import Counter
 
-# =========================
-# 📌 股票池
-# =========================
-UNIVERSE = [
-    "2330.TW","2317.TW","2454.TW","2382.TW",
-    "2412.TW","2881.TW","2882.TW",
-    "2408.TW","3532.TW","2379.TW"
-]
+st.set_page_config(page_title="539 AI 測試版", layout="wide")
 
-TRADE_FILE = "trades.csv"
+# ==============================
+# 抓歷史資料
+# ==============================
+@st.cache_data(ttl=10800)
+def load_history():
 
-# =========================
-# 📊 穩定抓資料（V6-Pro）
-# =========================
-def fetch_stock(symbol):
-    try:
-        df = yf.download(symbol, period="6mo", interval="1d", progress=False)
+    target = 300
+    headers = {"User-Agent": "Mozilla/5.0"}
 
-        if df is None or df.empty:
-            return None
+    all_data = []
+    page = 1
 
-        df = df.reset_index()
+    while len(all_data) < target:
 
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+        url = f"https://www.pilio.idv.tw/lto539/list.asp?indexpage={page}"
 
-        if "Close" not in df.columns:
-            return None
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            r.encoding = "big5"
 
-        df = df[["Date","Close"]].copy()
-        df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
-        df["symbol"] = symbol
+            soup = BeautifulSoup(r.text, "lxml")
 
-        return df.dropna()
+            rows = soup.find_all("tr")
 
-    except:
-        return None
+            page_data = []
 
-def fetch_all():
-    all_df = []
+            for row in rows:
 
-    for s in UNIVERSE:
-        df = fetch_stock(s)
-        if df is not None and len(df) > 20:
-            all_df.append(df)
+                nums = re.findall(r'\b\d{1,2}\b', row.text)
 
-    if len(all_df) == 0:
-        return None
+                nums = [int(x) for x in nums if 1 <= int(x) <= 39]
 
-    return pd.concat(all_df, ignore_index=True)
+                if len(nums) >= 5:
+                    page_data.append(sorted(nums[-5:]))
 
-# =========================
-# 🧠 V7 多策略模型
-# =========================
-def calc_features(df):
-    df = df.copy()
-    close = df["Close"]
+            if len(page_data) < 10:
+                break
 
-    # 📈 趨勢策略
-    df["ma5"] = close.rolling(5).mean()
-    df["ma20"] = close.rolling(20).mean()
+            all_data.extend(page_data)
 
-    trend_score = (df["ma5"] - df["ma20"]) / df["ma20"]
+            page += 1
 
-    # 🔁 均值回歸
-    std = close.rolling(20).std()
-    mean = close.rolling(20).mean()
-    reversion_score = (close - mean) / std
+        except:
+            page += 1
 
-    df["trend_score"] = trend_score
-    df["reversion_score"] = -reversion_score  # 反向
+    return all_data[:target][::-1]
 
-    # 🧠 合成 score
-    df["score"] = (
-        0.6 * df["trend_score"] +
-        0.4 * df["reversion_score"]
-    ) * 100
+# ==============================
+# 分析
+# ==============================
+def analyze(history):
 
-    df["score"] = df["score"].replace([np.inf, -np.inf], np.nan).fillna(50)
+    # 最近50期熱度
+    recent50 = history[-50:]
 
-    return df
+    freq = Counter([n for d in recent50 for n in d])
 
-# =========================
-# 📊 TOP10
-# =========================
-def get_top10(df):
-    latest = df.groupby("symbol").tail(1)
-    return latest.sort_values("score", ascending=False).head(10)
+    scores = {}
 
-# =========================
-# 💰 模擬交易（核心🔥）
-# =========================
-def simulate_trades(df):
-    trades = []
+    for n in range(1,40):
 
-    for symbol in df["symbol"].unique():
+        # 熱度
+        hot = freq[n]
 
-        data = df[df["symbol"] == symbol].copy()
-        data = data.sort_values("Date")
+        # gap（多久沒出）
+        gap = next(
+            (i for i,d in enumerate(reversed(history)) if n in d),
+            50
+        )
 
-        position = False
-        entry = 0
+        # 最近權重（越近越重要）
+        decay = 0
 
-        for _, row in data.iterrows():
+        for i,d in enumerate(reversed(history[-80:])):
 
-            if row["score"] > 70 and not position:
-                position = True
-                entry = row["Close"]
+            if n in d:
+                decay += 1 / (i+1)
 
-            elif row["score"] < 40 and position:
-                exit_price = row["Close"]
-                pnl = exit_price - entry
+        # 最終分數
+        score = (
+            hot * 1.2 +
+            gap * 0.8 +
+            decay * 8
+        )
 
-                trades.append({
-                    "symbol": symbol,
-                    "entry": entry,
-                    "exit": exit_price,
-                    "pnl": pnl
-                })
+        scores[n] = score
 
-                position = False
+    return scores
 
-    return pd.DataFrame(trades)
+# ==============================
+# AI 選號
+# ==============================
+def pick_numbers(scores):
 
-# =========================
-# 📊 equity curve
-# =========================
-def equity_curve(trades):
-    if trades.empty:
-        return None
+    nums = np.array(list(scores.keys()))
 
-    trades["cum_pnl"] = trades["pnl"].cumsum() + 100000
-    return trades
+    vals = np.array(list(scores.values()))
 
-# =========================
-# 🚀 UI
-# =========================
-st.title("📊 V7 量化核心系統（策略 + 回測 + 資金曲線）")
+    # 防止固定
+    vals = vals + np.random.rand(len(vals))*0.05
 
-# =========================
-# 📈 ① 選股
-# =========================
-st.header("🔥 TOP10 選股")
+    probs = vals / vals.sum()
 
-df = fetch_all()
+    picks = set()
 
-if df is None:
-    st.error("無資料")
-    st.stop()
+    while len(picks) < 5:
 
-df = calc_features(df)
-top10 = get_top10(df)
+        n = int(np.random.choice(nums, p=probs))
 
-st.dataframe(top10[["symbol","Close","score"]])
+        picks.add(n)
 
-# =========================
-# 💰 ② 模擬回測
-# =========================
-st.header("📊 策略回測（自動模擬）")
+    return sorted(list(picks))
 
-trades = simulate_trades(df)
+# ==============================
+# 健康度
+# ==============================
+def health(combo):
 
-if trades.empty:
-    st.warning("沒有交易訊號")
-else:
-    st.dataframe(trades)
+    odd = sum([1 for x in combo if x % 2 != 0])
 
-    # =========================
-    # 📈 equity curve
-    # =========================
-    eq = equity_curve(trades)
+    big = sum([1 for x in combo if x >= 20])
 
-    if eq is not None:
-        st.subheader("📈 資金曲線")
-        st.line_chart(eq["cum_pnl"])
+    return f"奇偶 {odd}:{5-odd} ｜ 大小 {big}:{5-big}"
 
-        # 📉 回撤
-        eq["peak"] = eq["cum_pnl"].cummax()
-        eq["drawdown"] = eq["cum_pnl"] - eq["peak"]
+# ==============================
+# UI
+# ==============================
+st.title("🔥 539 AI 測試版")
 
-        st.write("📉 最大回撤：", round(eq["drawdown"].min(), 2))
+history = load_history()
 
-        st.write("💰 總損益：", round(eq["pnl"].sum(), 2))
+# ==============================
+# 最新五期
+# ==============================
+st.subheader("📅 最新五期")
 
-# =========================
-# 💾 ③ 存交易紀錄
-# =========================
-st.header("💰 手動交易紀錄")
+cols = st.columns(5)
 
-symbol = st.text_input("股票", "2330.TW")
-shares = st.number_input("股數", 1, 1000, 10)
-entry = st.number_input("進場價", 500.0)
+for i,d in enumerate(history[-5:][::-1]):
 
-if st.button("存交易"):
+    cols[i].code(" ".join(f"{x:02d}" for x in d))
 
-    trade = {
-        "time": datetime.now(),
-        "symbol": symbol,
-        "shares": shares,
-        "entry": entry
+# ==============================
+# 熱號排行
+# ==============================
+st.subheader("🔥 熱號排行（近50期）")
+
+recent50 = history[-50:]
+
+freq = Counter([n for d in recent50 for n in d])
+
+heat_df = pd.DataFrame([
+    {
+        "號碼": n,
+        "次數": freq[n]
     }
+    for n in range(1,40)
+])
 
-    if os.path.exists(TRADE_FILE):
-        df_old = pd.read_csv(TRADE_FILE)
-        df_old = pd.concat([df_old, pd.DataFrame([trade])], ignore_index=True)
-    else:
-        df_old = pd.DataFrame([trade])
+heat_df = heat_df.sort_values("次數", ascending=False)
 
-    df_old.to_csv(TRADE_FILE, index=False)
-    st.success("已存入")
+st.dataframe(heat_df)
 
-if os.path.exists(TRADE_FILE):
-    st.subheader("📋 交易紀錄")
-    st.dataframe(pd.read_csv(TRADE_FILE))
+# ==============================
+# 預測
+# ==============================
+if st.button("🚀 AI 預測"):
+
+    scores = analyze(history)
+
+    b1 = pick_numbers(scores)
+    b2 = pick_numbers(scores)
+    b3 = pick_numbers(scores)
+
+    st.subheader("💰 推薦號碼")
+
+    st.success(
+        "第1組：" +
+        " - ".join(f"{x:02d}" for x in b1)
+    )
+
+    st.caption(health(b1))
+
+    st.success(
+        "第2組：" +
+        " - ".join(f"{x:02d}" for x in b2)
+    )
+
+    st.caption(health(b2))
+
+    st.success(
+        "第3組：" +
+        " - ".join(f"{x:02d}" for x in b3)
+    )
+
+    st.caption(health(b3))
+
+# ==============================
+# 重抓
+# ==============================
+if st.button("🔄 更新歷史資料"):
+
+    st.cache_data.clear()
+
+    st.rerun()
