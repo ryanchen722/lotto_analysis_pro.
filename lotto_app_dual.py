@@ -1,4 +1,3 @@
-import random
 import streamlit as st
 import requests
 import re
@@ -7,38 +6,28 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from collections import Counter
 
-st.set_page_config(page_title="539 AI 測試版", layout="wide")
+st.set_page_config(page_title="539 AI 回測版", layout="wide")
 
-# ==============================
-# 抓歷史資料
-# ==============================
 @st.cache_data(ttl=10800)
 def load_history():
-
     target = 300
     headers = {"User-Agent": "Mozilla/5.0"}
-
     all_data = []
     page = 1
 
     while len(all_data) < target:
-
         url = f"https://www.pilio.idv.tw/lto539/list.asp?indexpage={page}"
 
         try:
             r = requests.get(url, headers=headers, timeout=10)
             r.encoding = "big5"
-
             soup = BeautifulSoup(r.text, "lxml")
-
             rows = soup.find_all("tr")
 
             page_data = []
 
             for row in rows:
-
                 nums = re.findall(r'\b\d{1,2}\b', row.text)
-
                 nums = [int(x) for x in nums if 1 <= int(x) <= 39]
 
                 if len(nums) >= 5:
@@ -48,135 +37,110 @@ def load_history():
                 break
 
             all_data.extend(page_data)
-
             page += 1
 
-        except:
+        except Exception:
             page += 1
 
     return all_data[:target][::-1]
 
-# ==============================
-# 分析
-# ==============================
+
 def analyze(history):
-
-    # 最近50期熱度
     recent50 = history[-50:]
-
     freq = Counter([n for d in recent50 for n in d])
 
     scores = {}
 
-    for n in range(1,40):
-
-        # 熱度
+    for n in range(1, 40):
         hot = freq[n]
 
-        # gap（多久沒出）
         gap = next(
-            (i for i,d in enumerate(reversed(history)) if n in d),
+            (i for i, d in enumerate(reversed(history)) if n in d),
             50
         )
 
-        # 最近權重（越近越重要）
         decay = 0
-
-        for i,d in enumerate(reversed(history[-80:])):
-
+        for i, d in enumerate(reversed(history[-80:])):
             if n in d:
-                decay += 1 / (i+1)
+                decay += 1 / (i + 1)
 
-        # 最終分數
-        score = (
-            hot * 1.2 +
-            gap * 0.8 +
-            decay * 8
-        )
-
+        score = hot * 1.2 + gap * 0.8 + decay * 8
         scores[n] = score
 
     return scores
 
-# ==============================
-# AI 選號
-# ==============================
+
 def pick_numbers(scores):
-
     nums = np.array(list(scores.keys()))
+    vals = np.array(list(scores.values()), dtype=float)
 
-    vals = np.array(list(scores.values()))
-
-    # 防止固定
-    vals = vals + np.random.rand(len(vals))*0.05
-
+    vals = vals + np.random.rand(len(vals)) * 0.05
     probs = vals / vals.sum()
 
     picks = set()
-
     while len(picks) < 5:
+        picks.add(int(np.random.choice(nums, p=probs)))
 
-        n = int(np.random.choice(nums, p=probs))
+    return sorted(picks)
 
-        picks.add(n)
 
-    return sorted(list(picks))
-
-# ==============================
-# 健康度
-# ==============================
 def health(combo):
+    odd = sum(1 for x in combo if x % 2 != 0)
+    big = sum(1 for x in combo if x >= 20)
+    total = sum(combo)
 
-    odd = sum([1 for x in combo if x % 2 != 0])
+    return f"奇偶 {odd}:{5-odd} ｜ 大小 {big}:{5-big} ｜ 總和 {total}"
 
-    big = sum([1 for x in combo if x >= 20])
 
-    return f"奇偶 {odd}:{5-odd} ｜ 大小 {big}:{5-big}"
+def backtest(history, test_size=200):
+    hits = []
 
-# ==============================
-# UI
-# ==============================
-st.title("🔥 539 AI 測試版")
+    if len(history) <= test_size + 80:
+        test_size = max(50, len(history) - 100)
+
+    for i in range(len(history) - test_size, len(history)):
+        train = history[:i]
+        actual = history[i]
+
+        if len(train) < 80:
+            continue
+
+        scores = analyze(train)
+        pred = pick_numbers(scores)
+
+        hit = len(set(pred) & set(actual))
+        hits.append(hit)
+
+    return np.mean(hits), hits
+
+
+st.title("🔥 539 AI 回測驗證版")
 
 history = load_history()
 
-# ==============================
-# 最新五期
-# ==============================
-st.subheader("📅 最新五期")
+st.write("📊 資料期數：", len(history))
 
+st.subheader("📅 最新五期")
 cols = st.columns(5)
 
-for i,d in enumerate(history[-5:][::-1]):
-
+for i, d in enumerate(history[-5:][::-1]):
     cols[i].code(" ".join(f"{x:02d}" for x in d))
 
-# ==============================
-# 熱號排行
-# ==============================
+
 st.subheader("🔥 熱號排行（近50期）")
 
 recent50 = history[-50:]
-
 freq = Counter([n for d in recent50 for n in d])
 
 heat_df = pd.DataFrame([
-    {
-        "號碼": n,
-        "次數": freq[n]
-    }
-    for n in range(1,40)
-])
+    {"號碼": n, "次數": freq[n]}
+    for n in range(1, 40)
+]).sort_values("次數", ascending=False)
 
-heat_df = heat_df.sort_values("次數", ascending=False)
+st.dataframe(heat_df, use_container_width=True)
 
-st.dataframe(heat_df)
 
-# ==============================
-# 預測
-# ==============================
 if st.button("🚀 AI 預測"):
-
     scores = analyze(history)
 
     b1 = pick_numbers(scores)
@@ -185,32 +149,35 @@ if st.button("🚀 AI 預測"):
 
     st.subheader("💰 推薦號碼")
 
-    st.success(
-        "第1組：" +
-        " - ".join(f"{x:02d}" for x in b1)
-    )
+    for idx, b in enumerate([b1, b2, b3], start=1):
+        st.success(f"第{idx}組：" + " - ".join(f"{x:02d}" for x in b))
+        st.caption(health(b))
 
-    st.caption(health(b1))
 
-    st.success(
-        "第2組：" +
-        " - ".join(f"{x:02d}" for x in b2)
-    )
+if st.button("📊 回測模型"):
+    avg_hit, hits = backtest(history, test_size=200)
 
-    st.caption(health(b2))
+    st.subheader("📈 回測結果")
+    st.metric("平均命中", f"{avg_hit:.2f}")
+    st.write("隨機基準：約 0.64")
 
-    st.success(
-        "第3組：" +
-        " - ".join(f"{x:02d}" for x in b3)
-    )
+    dist = Counter(hits)
+    dist_df = pd.DataFrame([
+        {"命中數": k, "次數": v}
+        for k, v in sorted(dist.items())
+    ])
 
-    st.caption(health(b3))
+    st.dataframe(dist_df, use_container_width=True)
+    st.bar_chart(dist_df.set_index("命中數")["次數"])
 
-# ==============================
-# 重抓
-# ==============================
+    if avg_hit > 0.8:
+        st.success("🔥 模型略有優勢")
+    elif avg_hit > 0.65:
+        st.warning("⚠️ 接近隨機，只有微弱優勢")
+    else:
+        st.error("❌ 沒有優勢，接近亂選")
+
+
 if st.button("🔄 更新歷史資料"):
-
     st.cache_data.clear()
-
     st.rerun()
